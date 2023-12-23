@@ -46,7 +46,14 @@ def get_re(atoms, threshold=np.inf):
     return re
 
 
-def least_square(guess_atoms, target_d, q_type="distance"):
+def least_square(
+    guess_atoms,
+    target_d,
+    q_type="distance",
+    verbose=False,
+    gtol=1e-4,
+    maxiter=1000,
+):
     assert q_type in ["distance", "morse"]
     if q_type == "distance":
         scaler = pdist
@@ -61,14 +68,18 @@ def least_square(guess_atoms, target_d, q_type="distance"):
     guess_pos = guess_atoms.positions
 
     gtol = 1e-4
+    # gtol = 1e-3
     minimize_kwargs = {
         "method": "L-BFGS-B",
         "options": {
             "gtol": gtol,
+            # "maxiter": 20,
         }
     }
 
     def cost_function(trial_pos, target_q):
+        trial_pos = np.array(trial_pos)
+        target_q = np.array(target_q)
         wa_c = trial_pos.reshape(-1, 3)
         rab_c = scaler(wa_c)
 
@@ -77,11 +88,10 @@ def least_square(guess_atoms, target_d, q_type="distance"):
                 ((target_q - rab_c)**2) / (target_q**4)
             )
         elif q_type == "morse":
-            # loss = (target_q - rab_c).norm()
             loss = np.linalg.norm(target_q - rab_c)
         else:
             raise NotImplementedError
-        print(f"loss = {loss}")
+        # print(f"Debug: loss = {loss}")
         return loss
 
     res = minimize(
@@ -90,7 +100,8 @@ def least_square(guess_atoms, target_d, q_type="distance"):
         args=(target_d,),
         **minimize_kwargs,
     )
-    print(f"success: {res.success}")
+    if verbose:
+        print(res)
     return res.x.reshape(-1, 3)
 
 

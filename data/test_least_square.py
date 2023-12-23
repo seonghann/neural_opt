@@ -5,6 +5,8 @@ from lst_interp import least_square
 from ase.units import Bohr, Ang
 Bohr2Ang = Bohr / Ang
 
+import time
+
 
 init_xyz = "./forward_end_opt.xyz"
 final_xyz = "./backward_end_opt.xyz"
@@ -34,7 +36,11 @@ x_0 = atoms_0[gt_idx]
 q_type = ["distance", "morse"][1]
 if q_type == "distance":
     d_0 = pdist(x_0.positions)
-    x_pred = least_square(x_T, d_0, q_type="distance")
+    ## add noise to d_0 (target)
+    d_0 += np.random.randn(*d_0.shape) * 0.01; print(f"Debug: noise is added to d_0 (target)")
+    st = time.time()
+    x_pred = least_square(x_T, d_0, q_type="distance", verbose=True)
+    print(f"least_square time: {time.time() - st} sec")
 else:
     def make_qij(atoms):
         from lst_interp import get_re
@@ -50,8 +56,13 @@ else:
     qij = make_qij(x_0)
 
     d_0 = qij(x_0.positions)
-    x_pred = least_square(x_T, d_0, q_type="morse")
+    ## add noise to d_0 (target)
+    d_0 += np.random.randn(*d_0.shape) * 0.01; print(f"Debug: noise is added to d_0 (target)")
+    st= time.time()
+    x_pred = least_square(x_T, d_0, q_type="morse", verbose=True)
+    print(f"least_square time: {time.time() - st} sec")
     print(f"q norm: np.linalg.norm(qij(x_pred) - qij(x_0))={np.linalg.norm(qij(x_pred) - qij(x_0.positions))}")
+
 
 d_pred = pdist(x_pred)
 
@@ -64,6 +75,7 @@ print(f"DMAE: abs(d_pred - d_0).mean() = {abs(d_pred - d_0).mean()}")
 
 tmp = x_0.copy()
 tmp.set_positions(x_pred) 
+print(f"q_type: {q_type}")
 print(f"idx: {idx}")
 print(f"gt_idx: {gt_idx}")
 write("x_0.xyz", x_0); print("write x_0.xyz")
