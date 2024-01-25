@@ -1,0 +1,12 @@
+# config file for load dataset
+# train contains batch_size, num_workers
+
+train:
+  batch_size: 32
+  num_workers: 4
+
+dataset:
+  datadir: 'data'
+
+general:
+  name: "debug-config"
