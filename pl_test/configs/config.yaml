@@ -1,0 +1,78 @@
+# config file for load dataset
+# train contains batch_size, num_workers
+
+train:
+  batch_size: 8
+  num_workers: 4
+  lambda_train: 0.01
+  lambda_valid: 0.01
+  clip_grad: null  # float, null to disable
+  progress_bar: False
+  weight_decay: 1e-12
+  optimizer: adamw
+  seed: 1994
+  lr: 0.001
+  epochs: 10
+
+  check_val_every_n_epoch: 1
+  sample_every_n_batch: 10
+  sample_every_n_valid: 10
+
+dataset:
+  name: Geodesic2DFT
+  datadir: 'data'
+  raw_datadir: 'data/raw/GeodesictoDFT'
+
+debug:
+  save_dir: './debug'
+
+general:
+  name: 'first'
+  wandb: 'online'
+  save_model: True
+  gpus: 1
+  resume: # ckpt path
+  test_only: # ckpt path
+
+sampling:
+  sde_dt: 0.05
+  gode_iter: 50
+  gode_ref_dt: 0.05
+  gode_max_dt: 0.1
+
+model:
+  hidden_dim: 128
+  num_bond_type: 10
+  num_atom_type: 4
+  num_atom_feat: 8
+  score_act: 'silu'
+  edge_cat_act: 'silu'
+  edge_encoder:
+    name: 'mlp'
+    activation: 'silu'
+  graph_encoder:
+    name: 'schnet'
+    node_dim: 128
+    time_dim: 256
+    edge_dim: 128
+    num_filters: 128
+    num_convs: 6
+    cutoff: 15.0
+    smooth_conv: False
+
+diffusion:
+  scheduler:
+    name: 'bellcurve'
+    sigma_min: 1e-07
+    sigma_max: 0.001
+    beta_std: 0.125
+
+manifold:
+  ode_solver:
+    accuracy_threshold: 5  # percent error threshold
+    alpha: 1.6
+    beta: 2.3
+    svd_tol: 1e-3
+    iter: 10
+    ref_dt: 0.01
+    max_dt: 0.1
