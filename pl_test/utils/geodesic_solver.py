@@ -30,8 +30,6 @@ def redefine_edge_index(edges, batch, num_nodes):
 
     # new edge_index is (i * num_nodes + j) for each (i, j) in edge_index_bundle
     edge_index = torch.cat(edge_bundle, dim=-1)
-    # multiplier = torch.repeat_interleave(num_nodes, num_edges, dim=0)
-    # edge_index = edge_index[0] * multiplier + edge_index[1]  # (E, )
     n = num_nodes.max()
     i, j = edge_index
     edge_index = (j - i - 1) + n * i - i * (i + 1) // 2
@@ -108,266 +106,6 @@ class GeodesicSolver(object):
         q_ij = torch.exp(- self.alpha * (d_ij - d_e_ij) / d_e_ij) + self.beta * (d_e_ij / d_ij)
         return q_ij
 
-    def sparse_jacobian_d(self, edge_index, pos):
-        """
-        Compute jacobian matrix of d_ij.
-        Args:
-            edge_index (torch.Tensor): edge index tensor (2, E)
-            atom_type (torch.Tensor): atom type tensor (N, )
-            pos (torch.Tensor): position tensor (N, 3)
-        Returns:
-            jacobian (torch.Tensor, ): jacobian matrix tensor, expected size (E, 3N)
-        """
-        N = pos.size(0)
-        E = edge_index.size(1)
-
-        i, j = edge_index
-        k = torch.arange(i.size(0)).to(pos.device)
-
-        d_ij = self.compute_d(edge_index, pos)
-        dd_dx = (pos[i] - pos[j]) / d_ij[:, None]
-        # dd_ij/dx_i = (x_i - x_j) / d_ij
-        dd_dx = dd_dx.flatten()
-
-        k = k.unsqueeze(-1).expand(E, 3).flatten()
-        i = torch.stack([3 * i, 3 * i + 1, 3 * i + 2]).T.reshape(-1)
-        j = torch.stack([3 * j, 3 * j + 1, 3 * j + 2]).T.reshape(-1)
-
-        jacobian = torch.sparse_coo_tensor(
-            torch.stack([k, i]), dd_dx, (E, 3 * N)
-        )
-        jacobian += torch.sparse_coo_tensor(
-            torch.stack([k, j]), -dd_dx, (E, 3 * N)
-        )
-        return jacobian
-
-    def sparse_jacobian_q(self, edge_index, atom_type, pos):
-        """
-        Compute jacobian matrix of q_ij.
-        Args:
-            edge_index (torch.Tensor): edge index tensor (2, E), we consider directed graph
-            atom_type (torch.Tensor): atom type tensor (N, )
-            pos (torch.Tensor): position tensor (N, 3)
-        Returns:
-            jacobian (torch.coo-Tensor, ): jacobian matrix sparse-coo tensor, expected size (E, 3N)
-        """
-        N = pos.size(0)
-        E = edge_index.size(1)
-        # dq/dx = dq/dd * dd/dx
-
-        i, j = edge_index
-        k = torch.arange(i.size(0)).to(pos.device)
-
-        d_ij = self.compute_d(edge_index, pos)
-        d_e_ij = self.compute_de(edge_index, atom_type)
-        dd_dx = (pos[i] - pos[j]) / d_ij[:, None]
-        # dd_ij/dx_i = (x_i - x_j) / d_ij
-        # dq_ij/dd_ij = - alpha / d_e_ij * exp(- alpha / d_e_ij * (d_ij - d_e_ij)) - beta * d_e_ij / d_ij ** 2
-
-        # debug] print all variables and check their type and shape
-        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2
-
-        dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
-
-        k = k.unsqueeze(-1).expand(E, 3).flatten()
-        i = torch.stack([3 * i, 3 * i + 1, 3 * i + 2]).T.reshape(-1)
-        j = torch.stack([3 * j, 3 * j + 1, 3 * j + 2]).T.reshape(-1)
-
-        jacobian = torch.sparse_coo_tensor(
-            torch.stack([k, i]), dq_dx.flatten(), (E, 3 * N)
-        )
-        jacobian += torch.sparse_coo_tensor(
-            torch.stack([k, j]), -dq_dx.flatten(), (E, 3 * N)
-        )
-        return jacobian
-
-    def sparse_batch_jacobian_q(self, index_tensor, atom_type, pos):
-        """
-        Args:
-            index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
-            atom_type (torch.Tensor): atom type tensor (B, n)
-            pos (torch.Tensor): position tensor (B, n, 3)
-        Returns:
-            jacobian (torch.sparse Tensor): jacobian matrix tensor, expected size (B, e, 3n)
-        """
-        assert pos.dim() == 3
-
-        B = pos.size(0)
-        n = pos.size(1)
-        e = n * (n - 1) // 2
-
-        b_i, b_j = index_tensor[[0, 2]], index_tensor[[0, 3]]
-
-        _b_i = (b_i * torch.LongTensor([[n], [1]]).to(b_i.device)).sum(0)  # (E, )
-        _b_j = (b_j * torch.LongTensor([[n], [1]]).to(b_j.device)).sum(0)  # (E, )
-        _pos = pos.reshape(-1, 3)  # (B * n, 3)
-        _atom_type = atom_type.reshape(-1)  # (B * n, )
-
-        _edge_index = torch.stack([_b_i, _b_j])  # (2, E)
-
-        d_ij = self.compute_d(_edge_index, _pos)  # (E, )
-        d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
-
-        dd_dx = (_pos[_b_i] - _pos[_b_j]) / d_ij[:, None]  # (E, 3)
-        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2  # (E, )
-
-        dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
-
-        index = index_tensor[:2]  # (2, E)
-        index = torch.repeat_interleave(index, 3, dim=1)  # (2, 3E)
-
-        _i = _stack(index_tensor[2])  # (3E, )
-        _j = _stack(index_tensor[3])  # (3E, )
-
-        jacobian = torch.sparse_coo_tensor(
-            torch.cat([index, _i.unsqueeze(0)], dim=0),
-            dq_dx.flatten(),
-            (B, e, 3 * n),
-        )
-        jacobian += torch.sparse_coo_tensor(
-            torch.cat([index, _j.unsqueeze(0)], dim=0),
-            -dq_dx.flatten(),
-            (B, e, 3 * n),
-        )
-        return jacobian
-
-    def sparse_batch_hessian_q(self, index_tensor, atom_type, pos):
-        """
-        Args:
-            index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
-            atom_type (torch.Tensor): atom type tensor (B, n)
-            pos (torch.Tensor): position tensor (B, n, 3)
-        Returns:
-            hessian (torch.sparse Tensor): hessian matrix tensor, expected size (B, 9 * n ** 2, e)
-        """
-        assert pos.dim() == 3
-
-        B = pos.size(0)
-        n = pos.size(1)
-        e = n * (n - 1) // 2
-
-        b_i, b_j = index_tensor[[0, 2]], index_tensor[[0, 3]]
-
-        _b_i = (b_i * torch.LongTensor([[n], [1]]).to(b_i.device)).sum(0)  # (E, )
-        _b_j = (b_j * torch.LongTensor([[n], [1]]).to(b_j.device)).sum(0)  # (E, )
-        _pos = pos.reshape(-1, 3)  # (B * n, 3)
-        _atom_type = atom_type.reshape(-1)  # (B * n, )
-        _edge_index = torch.stack([_b_i, _b_j])  # (2, E)
-
-        d_ij = self.compute_d(_edge_index, _pos)  # (E, )
-        d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
-        d_pos = (_pos[_b_i] - _pos[_b_j])  # (E, 3)
-        hess_d_ij = d_pos.reshape(-1, 1, 3) * d_pos.reshape(-1, 3, 1) / (d_ij.reshape(-1, 1, 1) ** 3)
-        eye = torch.eye(3).reshape(1, 3, 3).to(d_ij.device)
-        hess_d_ij -= eye / d_ij.reshape(-1, 1, 1)  # (E, 3, 3)
-        # hess_d_ii = - hess_d_ij, hess_d_jj = - hess_d_ij, hess_d_ji = hess_d_ij
-
-        jacob_d_i = d_pos / d_ij[:, None]  # (E, 3)
-        # jacob_d_j = jacob_d_i
-
-        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2  # (E, )
-        K2 = (self.alpha / d_e_ij) ** 2 * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) + 2 * self.beta * d_e_ij / d_ij ** 3  # (E, )
-
-        hess_q_ij = K1.reshape(-1, 1, 1) * hess_d_ij + K2.reshape(-1, 1, 1) * jacob_d_i.unsqueeze(1) * (- jacob_d_i).unsqueeze(2)  # (E, 3, 3)
-        # hess_q_ji = hess_q_ij, hess_q_ii = - hess_q_ij, hess_q_jj = - hess_q_ij
-
-        index = index_tensor[:2]  # (2, E)
-        index = torch.repeat_interleave(index, 9, dim=1)  # (2, 9E)
-        index_1, index_2 = index
-        col_i, row_i = _stack(_repeat(index_tensor[2], 3)), _repeat(_stack(index_tensor[2]), 3)  # (3E, )
-        col_j, row_j = _stack(_repeat(index_tensor[3], 3)), _repeat(_stack(index_tensor[3]), 3)  # (3E, )
-
-        # make sparse hessian tensor
-        hess = torch.sparse_coo_tensor(
-            torch.stack([index_1, row_i * 3 * n + col_i, index_2], dim=0),
-            - hess_q_ij.flatten(),
-            (B, 9 * n ** 2, e),
-        )  # i, i
-        hess += torch.sparse_coo_tensor(
-            torch.stack([index_1, row_j * 3 * n + col_j, index_2], dim=0),
-            - hess_q_ij.flatten(),
-            (B, 9 * n ** 2, e),
-        )  # j, j
-        hess += torch.sparse_coo_tensor(
-            torch.stack([index_1, row_i * 3 * n + col_j, index_2], dim=0),
-            hess_q_ij.flatten(),
-            (B, 9 * n ** 2, e),
-        )  # i, j
-        hess += torch.sparse_coo_tensor(
-            torch.stack([index_1, row_j * 3 * n + col_i, index_2], dim=0),
-            hess_q_ij.flatten(),
-            (B, 9 * n ** 2, e),
-        )  # j, i
-        return hess
-
-    # def sparse_batch_hessian_q(self, index_tensor, atom_type, pos):
-    #     """
-    #     Args:
-    #         index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
-    #         atom_type (torch.Tensor): atom type tensor (B, n)
-    #         pos (torch.Tensor): position tensor (B, n, 3)
-    #     Returns:
-    #         hessian (torch.sparse Tensor): hessian matrix tensor, expected size (B, e, 3n, 3n)
-    #     """
-    #     assert pos.dim() == 3
-
-    #     B = pos.size(0)
-    #     n = pos.size(1)
-    #     e = n * (n - 1) // 2
-
-    #     b_i, b_j = index_tensor[[0, 2]], index_tensor[[0, 3]]
-
-    #     _b_i = (b_i * torch.LongTensor([[n], [1]]).to(b_i.device)).sum(0)  # (E, )
-    #     _b_j = (b_j * torch.LongTensor([[n], [1]]).to(b_j.device)).sum(0)  # (E, )
-    #     _pos = pos.reshape(-1, 3)  # (B * n, 3)
-    #     _atom_type = atom_type.reshape(-1)  # (B * n, )
-    #     _edge_index = torch.stack([_b_i, _b_j])  # (2, E)
-
-    #     d_ij = self.compute_d(_edge_index, _pos)  # (E, )
-    #     d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
-    #     d_pos = (_pos[_b_i] - _pos[_b_j])  # (E, 3)
-    #     hess_d_ij = d_pos.reshape(-1, 1, 3) * d_pos.reshape(-1, 3, 1) / (d_ij.reshape(-1, 1, 1) ** 3)
-    #     eye = torch.eye(3).reshape(1, 3, 3).to(d_ij.device)
-    #     hess_d_ij -= eye / d_ij.reshape(-1, 1, 1)  # (E, 3, 3)
-    #     # hess_d_ii = - hess_d_ij, hess_d_jj = - hess_d_ij, hess_d_ji = hess_d_ij
-
-    #     jacob_d_i = d_pos / d_ij[:, None]  # (E, 3)
-    #     # jacob_d_j = jacob_d_i
-
-    #     K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2  # (E, )
-    #     K2 = (self.alpha / d_e_ij) ** 2 * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) + 2 * self.beta * d_e_ij / d_ij ** 3  # (E, )
-
-    #     hess_q_ij = K1.reshape(-1, 1, 1) * hess_d_ij + K2.reshape(-1, 1, 1) * jacob_d_i.unsqueeze(1) * (- jacob_d_i).unsqueeze(2)  # (E, 3, 3)
-    #     # hess_q_ji = hess_q_ij, hess_q_ii = - hess_q_ij, hess_q_jj = - hess_q_ij
-
-    #     index = index_tensor[:2]  # (2, E)
-    #     index = torch.repeat_interleave(index, 9, dim=1)  # (2, 9E)
-    #     col_i, row_i = _stack(_repeat(index_tensor[2], 3)), _repeat(_stack(index_tensor[2]), 3)  # (3E, )
-    #     col_j, row_j = _stack(_repeat(index_tensor[3], 3)), _repeat(_stack(index_tensor[3]), 3)  # (3E, )
-
-    #     # make sparse hessian tensor
-    #     hess = torch.sparse_coo_tensor(
-    #         torch.cat([index, row_i.unsqueeze(0), col_i.unsqueeze(0)], dim=0),
-    #         - hess_q_ij.flatten(),
-    #         (B, e, 3 * n, 3 * n),
-    #     )  # i, i
-    #     hess += torch.sparse_coo_tensor(
-    #         torch.cat([index, row_j.unsqueeze(0), col_j.unsqueeze(0)], dim=0),
-    #         - hess_q_ij.flatten(),
-    #         (B, e, 3 * n, 3 * n),
-    #     )  # j, j
-    #     hess += torch.sparse_coo_tensor(
-    #         torch.cat([index, row_i.unsqueeze(0), col_j.unsqueeze(0)], dim=0),
-    #         hess_q_ij.flatten(),
-    #         (B, e, 3 * n, 3 * n),
-    #     )  # i, j
-    #     hess += torch.sparse_coo_tensor(
-    #         torch.cat([index, row_j.unsqueeze(0), col_i.unsqueeze(0)], dim=0),
-    #         hess_q_ij.flatten(),
-    #         (B, e, 3 * n, 3 * n),
-    #     )  # j, i
-    #     return hess
-
     def jacobian_d(self, edge_index, pos):
         """
         Compute jacobian matrix of d_ij.
@@ -419,33 +157,20 @@ class GeodesicSolver(object):
         hess_d_ij = d_pos.reshape(-1, 1, 3) * d_pos.reshape(-1, 3, 1) / (d_ij.reshape(-1, 1, 1) ** 3)
         eye = torch.eye(3).reshape(1, 3, 3).to(d_ij.device)
         hess_d_ij -= eye / d_ij.reshape(-1, 1, 1)
+        # hess_d_ii = - hess_d_ij, hess_d_jj = - hess_d_ij, hess_d_ji = hess_d_ij
 
-        hess_d_ii = - hess_d_ij
-        hess_d_jj = - hess_d_ij
-        hess_d_ji = hess_d_ij
-
-        # hessian of d is shape of (E, 3N, 3N)
-        # Firstly, make it sparse tensor
+        # hessian of d is shape of (E, 3N, 3N), make it a sparse tensor
         k = _repeat(k, 9)
-        col_i = _stack(_repeat(i, 3))
-        row_i = _repeat(_stack(i), 3)
-        col_j = _stack(_repeat(j, 3))
-        row_j = _repeat(_stack(j), 3)
-        hess = torch.sparse_coo_tensor(
-            torch.stack([k, row_i, col_i]), hess_d_ii.flatten(), (E, 3 * N, 3 * N)
-        )
-        hess += torch.sparse_coo_tensor(
-            torch.stack([k, row_j, col_j]), hess_d_jj.flatten(), (E, 3 * N, 3 * N)
-        )
-        hess += torch.sparse_coo_tensor(
-            torch.stack([k, row_i, col_j]), hess_d_ij.flatten(), (E, 3 * N, 3 * N)
-        )
-        hess += torch.sparse_coo_tensor(
-            torch.stack([k, row_j, col_i]), hess_d_ji.flatten(), (E, 3 * N, 3 * N)
-        )
-
-        hessian = hess.to_dense()
-        return hessian
+        col_i, row_i = _stack(_repeat(i, 3)), _repeat(_stack(i), 3)
+        col_j, row_j = _stack(_repeat(j, 3)), _repeat(_stack(j), 3)
+        row = torch.cat([row_i, row_j, row_i, row_j])
+        col = torch.cat([col_i, col_j, col_j, col_i])
+        edge = k.repeat(4)
+        index = torch.stack([edge, row, col])
+        val = torch.cat([-hess_d_ij, -hess_d_ij, hess_d_ij, hess_d_ij], dim=0).flatten()
+        hess = torch.sparse_coo_tensor(index, val, (E, 3 * N, 3 * N))
+        hess = hess.to_dense()
+        return hess
 
     def hessian_q(self, edge_index, atom_type, pos):
         """
@@ -475,6 +200,179 @@ class GeodesicSolver(object):
 
         hessian_q = K1.reshape(-1, 1, 1) * hessian_d + K2.reshape(-1, 1, 1) * jacobian_d.unsqueeze(1) * jacobian_d.unsqueeze(2)
         return hessian_q
+
+    def sparse_jacobian_d(self, edge_index, pos):
+        """
+        Compute jacobian matrix of d_ij.
+        Args:
+            edge_index (torch.Tensor): edge index tensor (2, E)
+            atom_type (torch.Tensor): atom type tensor (N, )
+            pos (torch.Tensor): position tensor (N, 3)
+        Returns:
+            jacobian (torch.Tensor, ): jacobian matrix tensor, expected size (E, 3N)
+        """
+        N = pos.size(0)
+        E = edge_index.size(1)
+
+        i, j = edge_index
+        k = torch.arange(i.size(0)).to(pos.device)
+
+        d_ij = self.compute_d(edge_index, pos)
+        dd_dx = (pos[i] - pos[j]) / d_ij[:, None]
+        # dd_ij/dx_i = (x_i - x_j) / d_ij
+        dd_dx = dd_dx.flatten()
+
+        k = _repeat(k, 3)
+        i = _stack(i)
+        j = _stack(j)
+
+        index = torch.stack([torch.cat([k, k,], dim=0), torch.cat([i, j], dim=0)])
+        val = torch.cat([dd_dx, -dd_dx], dim=0)
+        jacobian = torch.sparse_coo_tensor(index, val, (E, 3 * N))
+        return jacobian
+
+    def sparse_jacobian_q(self, edge_index, atom_type, pos):
+        """
+        Compute jacobian matrix of q_ij.
+        Args:
+            edge_index (torch.Tensor): edge index tensor (2, E), we consider directed graph
+            atom_type (torch.Tensor): atom type tensor (N, )
+            pos (torch.Tensor): position tensor (N, 3)
+        Returns:
+            jacobian (torch.coo-Tensor, ): jacobian matrix sparse-coo tensor, expected size (E, 3N)
+        """
+        N = pos.size(0)
+        E = edge_index.size(1)
+        # dq/dx = dq/dd * dd/dx
+
+        i, j = edge_index
+        k = torch.arange(i.size(0)).to(pos.device)
+
+        d_ij = self.compute_d(edge_index, pos)
+        d_e_ij = self.compute_de(edge_index, atom_type)
+        dd_dx = (pos[i] - pos[j]) / d_ij[:, None]
+        # dd_ij/dx_i = (x_i - x_j) / d_ij
+        # dq_ij/dd_ij = - alpha / d_e_ij * exp(- alpha / d_e_ij * (d_ij - d_e_ij)) - beta * d_e_ij / d_ij ** 2
+
+        # debug] print all variables and check their type and shape
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2
+
+        dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
+
+        k = _repeat(k, 3)
+        i = _stack(i)
+        j = _stack(j)
+
+        index = torch.stack([torch.cat([k, k,], dim=0), torch.cat([i, j], dim=0)])
+        val = torch.cat([dq_dx, -dq_dx], dim=0).flatten()
+        jacobian = torch.sparse_coo_tensor(index, val, (E, 3 * N))
+        return jacobian
+
+    def sparse_batch_jacobian_q(self, index_tensor, atom_type, pos):
+        """
+        Args:
+            index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
+            atom_type (torch.Tensor): atom type tensor (B, n)
+            pos (torch.Tensor): position tensor (B, n, 3)
+        Returns:
+            jacobian (torch.sparse Tensor): jacobian matrix tensor, expected size (B, e, 3n)
+        """
+        assert pos.dim() == 3
+
+        B = pos.size(0)
+        n = pos.size(1)
+        e = n * (n - 1) // 2
+
+        _b = index_tensor[0]
+        _i = index_tensor[2] + n * _b
+        _j = index_tensor[3] + n * _b
+        _pos = pos.reshape(-1, 3)  # (B * n, 3)
+        _atom_type = atom_type.reshape(-1)  # (B * n, )
+        _edge_index = torch.stack([_i, _j])  # (2, E)
+
+        d_ij = self.compute_d(_edge_index, _pos)  # (E, )
+        d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
+
+        dd_dx = (_pos[_i] - _pos[_j]) / d_ij[:, None]  # (E, 3)
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2  # (E, )
+
+        dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
+
+        index = index_tensor[:2]  # (2, E)
+        index = torch.repeat_interleave(index, 3, dim=1)  # (2, 3E)
+
+        _i = _stack(index_tensor[2])  # (3E, )
+        _j = _stack(index_tensor[3])  # (3E, )
+
+        jacobian = torch.sparse_coo_tensor(
+            torch.cat([index, _i.unsqueeze(0)], dim=0),
+            dq_dx.flatten(),
+            (B, e, 3 * n),
+        )
+        jacobian += torch.sparse_coo_tensor(
+            torch.cat([index, _j.unsqueeze(0)], dim=0),
+            -dq_dx.flatten(),
+            (B, e, 3 * n),
+        )
+        # TODO
+        # jacobian = jacobian.to_dense()
+        return jacobian
+
+    def sparse_batch_hessian_q(self, index_tensor, atom_type, pos):
+        """
+        Args:
+            index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
+            atom_type (torch.Tensor): atom type tensor (B, n)
+            pos (torch.Tensor): position tensor (B, n, 3)
+        Returns:
+            hessian (torch.sparse Tensor): hessian matrix tensor, expected size (B, 9 * n ** 2, e)
+        """
+        assert pos.dim() == 3
+
+        B = pos.size(0)
+        n = pos.size(1)
+        e = n * (n - 1) // 2
+        _b = index_tensor[0]
+        _i = index_tensor[2] + n * _b
+        _j = index_tensor[3] + n * _b
+        _pos = pos.reshape(-1, 3)  # (B * n, 3)
+        _pos = _pos.contiguous()
+        _atom_type = atom_type.reshape(-1)  # (B * n, )
+        _atom_type = _atom_type.contiguous()
+        _edge_index = torch.stack([_i, _j]).contiguous()  # (2, E)
+
+        torch.cuda.empty_cache()
+        d_ij = self.compute_d(_edge_index, _pos)  # (E, )
+        d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
+        d_pos = (_pos[_i] - _pos[_j])  # (E, 3)
+        hess_d_ij = d_pos.reshape(-1, 1, 3) * d_pos.reshape(-1, 3, 1) / (d_ij.reshape(-1, 1, 1) ** 3)
+        eye = torch.eye(3).reshape(1, 3, 3).to(d_ij.device)
+        hess_d_ij -= eye / d_ij.reshape(-1, 1, 1)  # (E, 3, 3)
+        # hess_d_ii = - hess_d_ij, hess_d_jj = - hess_d_ij, hess_d_ji = hess_d_ij
+
+        jacob_d_i = d_pos / d_ij[:, None]  # (E, 3)
+        # jacob_d_j = jacob_d_i
+
+        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2  # (E, )
+        K2 = (self.alpha / d_e_ij) ** 2 * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) + 2 * self.beta * d_e_ij / d_ij ** 3  # (E, )
+
+        hess_q_ij = K1.reshape(-1, 1, 1) * hess_d_ij + K2.reshape(-1, 1, 1) * jacob_d_i.unsqueeze(1) * (- jacob_d_i).unsqueeze(2)  # (E, 3, 3)
+        # hess_q_ji = hess_q_ij, hess_q_ii = - hess_q_ij, hess_q_jj = - hess_q_ij
+
+        b_e_index = index_tensor[:2]  # (2, E)
+        b_e_index = torch.repeat_interleave(b_e_index, 9, dim=1)  # (2, 9E)
+        index_1, index_2 = b_e_index
+        col_i, row_i = _stack(_repeat(index_tensor[2], 3)), _repeat(_stack(index_tensor[2]), 3)  # (3E, )
+        col_j, row_j = _stack(_repeat(index_tensor[3], 3)), _repeat(_stack(index_tensor[3]), 3)  # (3E, )
+
+        index = torch.stack([
+            index_1.repeat(4),
+            torch.cat([row_i, row_j, row_i, row_j]) * 3 * n + torch.cat([col_i, col_j, col_j, col_i]),
+            index_2.repeat(4)
+        ])
+        val = torch.cat([-hess_q_ij, -hess_q_ij, hess_q_ij, hess_q_ij], dim=0).flatten()
+        hess = torch.sparse_coo_tensor(index, val, (B, 9 * n ** 2, e))
+        return hess
 
     def dq2dx(self, dq, pos, edge_index, atom_type):
         # dx = J^-1 dq
@@ -526,7 +424,6 @@ class GeodesicSolver(object):
         q_dot = J @ x_dot
 
         x = x.flatten()
-        n = x.size(0) // 3
 
         total_time = x_dot.norm()
         x_dot = x_dot / x_dot.norm()
@@ -540,7 +437,30 @@ class GeodesicSolver(object):
 
         return x, x_dot, total_time, q, q_dot
 
-    def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse"):
+    def pos_adjust(self, x, J, num_nodes, scaler=0.05, thresh=1e-3):
+        """
+        Adjust position tensor so that singular values less than threshold becomes larger than threshold.
+        By pushing the position along the singular vectors corresponding to the small (but non-zero) singular values,
+        we can adjust position with minimal change in q-coordinates.
+        Args:
+            x (torch.Tensor): position tensor (B, n, 3)
+            J (torch.Tensor): jacobian tensor (B, e, 3n)
+            num_nodes (torch.Tensor): number of nodes for each graph (B, )
+        """
+        J = J.to_dense()
+        U, S, Vh = torch.vmap(torch.linalg.svd)(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
+        mask = (S > 1e-9) & (S < thresh)  # select small (but nonzero) singular values
+        coeff = torch.randn(mask.size()).to(x.device)  # coefficient for singular vectors for adjustment
+        coeff = coeff.masked_fill(~mask, 0)  # only selected singular vectors
+        coeff = coeff / ((coeff.pow(2).sum(-1, keepdim=True)).sqrt() + 1e-10) * scaler  # normalize and scale
+
+        pos_adjust = (coeff.unsqueeze(-1) * Vh).sum(1).reshape(len(num_nodes), -1, 3)  # (B, n, 3)
+        flag = mask.any()
+        x += pos_adjust
+        return x, flag
+
+    def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
+                         pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3):
         """
         Args:
             x (torch.Tensor): initial position tensor (B, n, 3)
@@ -549,6 +469,7 @@ class GeodesicSolver(object):
             atom_type (torch.Tensor): atom type tensor (B, n)
 
         """
+        # TODO: adjust position with singular values
         assert q_type == "morse"
 
         B = batch.max() + 1
@@ -565,14 +486,21 @@ class GeodesicSolver(object):
         ).to_dense()  # (B, e)
 
         J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
-        J_inv = vmap(torch.linalg.pinv)(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
+        x, flag = self.pos_adjust(x, J, num_nodes, scaler=pos_adjust_scaler, thresh=pos_adjust_thresh)
+        if flag:
+            # recompute jacobian
+            print("Adjusting positions because of numerical unstability...")
+            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
+
+        J_inv = torch.stack([torch.linalg.pinv(j, rtol=1e-4, atol=self.svd_tol) for j in J])
+        # J_inv = vmap(torch.linalg.pinv)(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
 
         x_dot = torch.bmm(J_inv, q_dot.unsqueeze(-1)).reshape(B, n, 3)  # (B, n, 3)
         q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
 
-        total_time = torch.sqrt(x_dot.pow(2).sum(dim=(1, 2)) / num_nodes)  # (B, )
         total_time = x_dot.reshape(B, -1).norm(dim=-1)
         x_dot = x_dot / total_time.reshape(-1, 1, 1)  # (B, n, 3)
+        q_dot = q_dot / total_time.reshape(-1, 1)  # (B, e)
 
         if q_type == "morse":
             q = self.batch_compute_q(index_tensor, atom_type, x)
@@ -636,8 +564,8 @@ class GeodesicSolver(object):
         return self.compute_de(edge_index, atom_type)
 
     def batch_geodesic_ode_solve(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
-                                 num_iter=100, ref_dt=1e-2, max_dt=1e-1, verbose=0, max_iter=1000, err_thresh=5,
-                                 method="Euler"):
+                                 num_iter=10, ref_dt=1e-2, max_dt=1e-1, min_dt=1e-3, verbose=0, max_iter=1000, err_thresh=0.05,
+                                 pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, method="Euler"):
         """
         Args:
             x: torch.Tensor, initial position tensor (N, 3)
@@ -654,21 +582,31 @@ class GeodesicSolver(object):
             atom_type,
             batch,
             num_nodes,
-            q_type=q_type
+            q_type=q_type,
+            pos_adjust_scaler=pos_adjust_scaler,
+            pos_adjust_thresh=pos_adjust_thresh,
         )
-        init = {"x": x, "x_dot": x_dot / total_time.reshape(-1, 1, 1), "q": q, "q_dot": q_dot}
+        init = {
+            "x": x.clone(),
+            "x_dot": x_dot.clone() * total_time.reshape(-1, 1, 1),
+            "q": q.clone(),
+            "q_dot": q_dot.clone() * total_time.reshape(-1, 1),
+        }
         # x: (B, n, 3), x_dot: (B, n, 3), total_time: (B, ), q: (B, e), q_dot: (B, e), index_tensor: (4, E)
-        init_q_dot_norm = q_dot.norm(dim=1) / total_time  # (B, )
+        init_q_dot_norm = q_dot.norm(dim=1)  # (B, )
         B = x.size(0)
 
-        ref_dt = torch.where(total_time / num_iter < ref_dt, total_time / num_iter, ref_dt)  # (B, )
+        _ = total_time / num_iter
+        ref_dt = _.clip(max=ref_dt)
         dt = ref_dt
 
         current_time = torch.zeros_like(total_time)  # (B, )
-        iter = 0
-        done = total_time <= current_time + 1e-6  # (B, )
+        iter = torch.zeros_like(total_time, dtype=torch.long)  # (B, )
+        done = total_time <= (current_time + 1e-6)  # (B, )
+        ban_index = torch.LongTensor([])
 
-        while (~done).any() and iter < max_iter:
+        cnt = 0
+        while (~done).any() and (iter[~done] < max_iter).any():
             x_new, x_dot_new, q_dot = self.batch_advance(
                 x, x_dot,
                 index_tensor,
@@ -682,38 +620,55 @@ class GeodesicSolver(object):
             )
 
             var_dt = 1 / x_dot_new.reshape(B, -1).norm(dim=-1) * ref_dt
-            cond = ref_dt > var_dt
-            var_dt = torch.where(cond, ref_dt, var_dt)
-            cond = max_dt > var_dt
-            dt_new = torch.where(cond, var_dt, max_dt)
-
-            cond = total_time - current_time < dt_new
-            dt_new = torch.where(cond, total_time - current_time, dt_new)
+            dt_new = (ref_dt.clip(min=var_dt)).clip(min=min_dt, max=max_dt)
 
             q_dot_norm = q_dot.norm(dim=1)  # (B, )
-            err = (q_dot_norm - init_q_dot_norm[~done]).abs() / init_q_dot_norm[~done] * 100
+            err = (q_dot_norm - init_q_dot_norm[~done]).abs() / init_q_dot_norm[~done]
+            not_done_index = torch.where(~done)[0]
             if (err > err_thresh).any():
-                restart_mask = err > err_thresh
-                x_new[~done][restart_mask] = x[~done][restart_mask]
-                x_dot_new[~done][restart_mask] = x_dot[~done][restart_mask]
-                dt_new[~done][restart_mask] = dt[~done][restart_mask] * 0.5
-                ref_dt[~done][restart_mask] = ref_dt[~done][restart_mask] * 0.5
-                if verbose >= 0:
-                    print("[Warning] veolocity error is too large, restart with smaller time step.")
-                    print(f"\t\terr = {err}")
+                restart_index = not_done_index[err > err_thresh]
+                x_new[restart_index] = init["x"][restart_index]
+                x_dot_new[restart_index] = init["x_dot"][restart_index]
+                dt_new[restart_index] = dt[restart_index] * 0.5
+                ref_dt[restart_index] = ref_dt[restart_index] * 0.5
+                current_time[restart_index] = 0
+                iter[restart_index] = 0
 
-            dt = dt_new
+                new_ban = torch.where(ref_dt < min_dt)[0].cpu()
+                _ = torch.isin(new_ban, not_done_index[err > err_thresh])
+                new_ban = new_ban[_]
+                if new_ban.numel() > 0:
+                    ban_index = torch.cat([ban_index, new_ban])
+                    ban_index = ban_index.unique()
+                    done[ban_index] = True
+                    ref_dt[ban_index] = min_dt
+                    print(f"[Warning] Some samples ({new_ban}) are banned due to numerical unstability.")
+
+                    if verbose >= 0:
+                        print(f"[Warning] (iter={cnt, iter[new_ban]+1})veolocity error is too large, restart with smaller time step.")
+                        torch.set_printoptions(precision=4, sci_mode=False)
+                        print(f"err = {err[err > err_thresh]}")
+                        torch.set_printoptions()
+
+                update_index = not_done_index[err <= err_thresh]
+                current_time[update_index] += dt[update_index]
+                iter[update_index] += 1
+            else:
+                current_time += dt
+                iter += 1
+
+            cnt += 1
             x, x_dot = x_new, x_dot_new
+            remain_time = (total_time - current_time).relu()
+            dt_new = torch.stack([dt_new, remain_time]).min(dim=0).values
+            dt = dt_new
 
-            current_time += dt
-            iter += 1
-            done = total_time <= current_time + 1e-6  # (B, )
+            done[~done] = remain_time[~done] < 1e-6
 
             if verbose >= 1:
-                print(f"iter = {iter}, \n\tcurrent_time = {current_time}, \n\ttotal_time = {total_time}, \n\tdt = {dt}, \n\tdone = {done}")
-
-        if verbose >= 1:
-            print(f"iter = {iter}, \n\tcurrent_time = {current_time}, \n\ttotal_time = {total_time}, \n\tdt = {dt}, \n\tdone = {done}")
+                print(f"iter = {iter}, \n\tcurrent_time = \n\t{current_time}, \n\ttotal_time = \n\t{total_time}, \n\tdt = \n\t{dt}, \n\tdone = \n\t{done}")
+            if cnt >= 2 * max_iter:
+                break
 
         if q_type == "morse":
             q_last = self.batch_compute_q(index_tensor, atom_type, x)
@@ -723,8 +678,9 @@ class GeodesicSolver(object):
         x_dot *= total_time.reshape(-1, 1, 1)
         q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
         last = {"x": x, "x_dot": x_dot, "q": q_last, "q_dot": q_dot}
+        stats = {"iter": iter, "current_time": current_time, "total_time": total_time, "ban_index": ban_index}
 
-        return init, last, iter, index_tensor
+        return init, last, iter, index_tensor, stats
 
     def batch_advance(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False, method="Euler"):
         if method == "Euler":
@@ -733,8 +689,11 @@ class GeodesicSolver(object):
         elif method == "Heun":
             return self.batch_advance_heun(x, x_dot, index_tensor, atom_type, done, dt, q_type=q_type, verbose=verbose, return_qdot=return_qdot)
 
+        elif method == "RK4":
+            return self.batch_advance_rk4(x, x_dot, index_tensor, atom_type, done, dt, q_type=q_type, verbose=verbose, return_qdot=return_qdot)
+
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"method {method} is not implemented.")
 
     def batch_advance_euler(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
         """
@@ -762,24 +721,60 @@ class GeodesicSolver(object):
         else:
             q_dot = None
 
-        christoffel = self.batch_christoffel(index_tensor, atom_type, x, J, not_done_index)  # (B, n, n, n)
-        x_ddot = - torch.einsum("bj,bkij,bi->bk", x_dot[~done].reshape(B, -1), christoffel, x_dot[~done].reshape(B, -1))
-        x_ddot = x_ddot.reshape(B, -1, 3)
+        _dt = torch.where(dt > 0, dt, torch.zeros_like(dt))
+        dx, dx_dot = self._advance(done, x, x_dot, index_tensor, atom_type, _dt, q_type=q_type, J=J)
+        x[~done] += dx
+        x_dot[~done] += dx_dot
+        if verbose:
+            print(f"\t\tdebug: dx = {dx.reshape(B, -1).norm(dim=-1)}, dx_dot norm = {dx_dot.reshape(B, -1).norm(dim=-1)}")
 
-        # dt must be non-negative
-        cond = dt > 0
-        _dt = torch.where(cond, dt, torch.zeros_like(dt))
-        update_x = x_dot[~done] * _dt.reshape(-1, 1, 1)
-        update_x_dot = x_ddot * _dt.reshape(-1, 1, 1)
+        return x, x_dot, q_dot
+
+    def batch_advance_heun(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
+        """
+        Args:
+            x: torch.Tensor, initial position tensor (B, n, 3)
+            x_dot: torch.Tensor, initial velocity tensor (B, n, 3)
+            index_tensor: torch.Tensor, redefined edge index tensor (4, E)
+            atom_type: torch.Tensor, atom type tensor (B, n)
+            done: torch.BoolTensor, already finishied flag tensor (B, )
+            dt: torch.Tensor, time step tensor (B, )
+        """
+        dt = torch.tensor(dt[~done])
+        if q_type == "morse":
+            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+        elif q_type == "DM":
+            J = self.sparse_batch_jacobian_d(index_tensor, x)
+
+        B = (~done).sum()
+        not_done_index = torch.where(~done)[0]
+        J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
+
+        if return_qdot:
+            q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
+        else:
+            q_dot = None
+
+        _dt = dt.clip(min=0)
+        x_new, x_dot_new = x.clone(), x_dot.clone()
+
+        dx1, dx_dot1 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type, J=J)
+        x_new[~done] = x_new[~done] + dx1
+        x_dot_new[~done] = x_dot[~done] + dx_dot1
+
+        dx2, dx_dot2 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
+
+        update_x = (dx1 + dx2) / 2
+        update_x_dot = (dx_dot1 + dx_dot2) / 2
+
         x[~done] += update_x
         x_dot[~done] += update_x_dot
-
         if verbose:
             print(f"\t\tdebug: dx = {update_x.reshape(B, -1).norm(dim=-1)}, dx_dot norm = {update_x_dot.reshape(B, -1).norm(dim=-1)}")
 
         return x, x_dot, q_dot
 
-    def batch_advance_heun(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
+    def batch_advance_rk4(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
         """
         Args:
             x: torch.Tensor, initial position tensor (B, n, 3)
@@ -797,36 +792,32 @@ class GeodesicSolver(object):
 
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
-        J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
+        J = J.index_select(0, not_done_index)
 
         if return_qdot:
             q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
         else:
             q_dot = None
 
-        christoffel = self.batch_christoffel(index_tensor, atom_type, x, J, not_done_index)  # (B, n, n, n)
-        x_ddot1 = - torch.einsum("bj,bkij,bi->bk", x_dot[~done].reshape(B, -1), christoffel, x_dot[~done].reshape(B, -1))
-        x_ddot1 = x_ddot1.reshape(B, -1, 3)
+        _dt = torch.where(dt > 0, dt, torch.zeros_like(dt))
+        x_new, x_dot_new = x.clone(), x_dot.clone()
+        dx1, dx_dot1 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type, J=J)
+        x_new[~done] = x_new[~done] + dx1 * 0.5
+        x_dot_new[~done] = x_dot[~done] + dx_dot1 * 0.5
 
-        # dt must be non-negative
-        cond = dt > 0
-        _dt = torch.where(cond, dt, torch.zeros_like(dt))
-        new_x, new_x_dot = x.clone(), x_dot.clone()
-        new_x[~done] += x_dot[~done] * _dt.reshape(-1, 1, 1)
-        new_x_dot[~done] += x_ddot1 * _dt.reshape(-1, 1, 1)
+        dx2, dx_dot2 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
+        x_new, x_dot_new = x.clone(), x_dot.clone()
+        x_new[~done] = x_new[~done] + dx2 * 0.5
+        x_dot_new[~done] = x_dot[~done] + dx_dot2 * 0.5
 
-        if q_type == "morse":
-            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, new_x)
-        elif q_type == "DM":
-            J = self.sparse_batch_jacobian_d(index_tensor, new_x)
-        J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
+        dx3, dx_dot3 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
+        x_new, x_dot_new = x.clone(), x_dot.clone()
+        x_new[~done] = x_new[~done] + dx3
+        x_dot_new[~done] = x_dot[~done] + dx_dot3
 
-        christoffel = self.batch_christoffel(index_tensor, atom_type, new_x, J, not_done_index)  # (B, n, n, n)
-        x_ddot2 = - torch.einsum("bj,bkij,bi->bk", new_x_dot[~done].reshape(B, -1), christoffel, new_x_dot[~done].reshape(B, -1))
-        x_ddot2 = x_ddot2.reshape(B, -1, 3)
-
-        update_x = (x_dot[~done] + new_x_dot[~done]) * _dt.reshape(-1, 1, 1) / 2
-        update_x_dot = (x_ddot1 + x_ddot2) * _dt.reshape(-1, 1, 1) / 2
+        dx4, dx_dot4 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
+        update_x = (dx1 + 2 * dx2 + 2 * dx3 + dx4) / 6
+        update_x_dot = (dx_dot1 + 2 * dx_dot2 + 2 * dx_dot3 + dx_dot4) / 6
         x[~done] += update_x
         x_dot[~done] += update_x_dot
 
@@ -835,62 +826,37 @@ class GeodesicSolver(object):
 
         return x, x_dot, q_dot
 
+    def _advance(self, done, x, x_dot, index_tensor, atom_type, dt, q_type="morse", J=None):
+        B = (~done).sum()
+        not_done_index = torch.where(~done)[0]
+        if J is None:
+            if q_type == "morse":
+                J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+                J = J.index_select(0, not_done_index)
+            elif q_type == "DM":
+                J = self.sparse_batch_jacobian_d(index_tensor, x)
+                J = J.index_select(0, not_done_index)
+            else:
+                raise NotImplementedError
+        christoffel = self.batch_christoffel(index_tensor, atom_type, x, J, not_done_index)  # (B, n, n, n)
+        x_ddot = - torch.einsum("bj,bkij,bi->bk", x_dot[~done].reshape(B, -1), christoffel, x_dot[~done].reshape(B, -1))
+        x_ddot = x_ddot.reshape(B, -1, 3)
+
+        dx = x_dot[~done] * dt.reshape(-1, 1, 1)
+        dx_dot = x_ddot * dt.reshape(-1, 1, 1)
+        return dx, dx_dot
+
     def batch_christoffel(self, index_tensor, atom_type, x, J, not_done_index):
-        B, e, n3 = J.shape
-        # TODO : re-implement the hessian function so that the output shape is (B, e, 3n * 3n)
+        J = J.to_dense()
+        n3 = x.size(1) * 3
+        B = not_done_index.numel()
         hess = self.sparse_batch_hessian_q(index_tensor, atom_type, x)  # sparse (B, 3n * 3n, e)
         hess = hess.index_select(0, not_done_index)  # sparse (B, 3n * 3n, e)
-        J_inv = vmap(torch.linalg.pinv)(J.to_dense(), rtol=1e-4, atol=self.svd_tol).transpose(-1, -2)  # dense (B, e, 3n)
+        J_inv = vmap(torch.linalg.pinv)(J, rtol=1e-4, atol=self.svd_tol).transpose(-1, -2)  # dense (B, e, 3n)
+
         christoffel = torch.bmm(hess, J_inv).transpose(-1, -2).reshape(B, n3, n3, n3)
         # Gamma^k_ij = christoffel[:, k, i, j]
         return christoffel
-
-    def geodesic_ode_solve(self, x, q_dot, edge_index, atom_type, q_type="morse",
-                           num_iter=100, check_dot_every=10,
-                           ref_dt=1e-2, max_dt=1e-1, verbose=0):
-        """
-        Args:
-            x: torch.Tensor, initial position tensor (N, 3)
-            q_dot: torch.Tensor, initial velocity tensor (E, )
-            edge_index: torch.Tensor, edge index tensor (2, E)
-            atom_type: torch.Tensor, atom type tensor (N, )
-        """
-
-        x, x_dot, total_time, q, q_dot = self.initialize(x, q_dot, edge_index, atom_type, q_type=q_type)
-
-        ref_dt = min(total_time / num_iter, ref_dt)
-        dt = ref_dt
-        if verbose >= 1:
-            print(f"initial dt = {ref_dt:0.6f}, total_expected_iter = {total_time / ref_dt:1.0f}")
-
-        current_time = 0
-        iter = 0
-        total_dq = 0
-        # debug, check all variables' shape
-        while total_time > current_time:
-            x_new, x_dot_new = self.advance(x, x_dot, edge_index, atom_type, q_type=q_type, dt=dt, verbose=verbose >= 3)
-            current_time += dt
-
-            # calculate dq
-            if q_type == "morse":
-                q_new = self.compute_q(edge_index, atom_type, x_new.reshape(-1, 3))
-            elif q_type == "DM":
-                q_new = self.compute_d(edge_index, x_new.reshape(-1, 3))
-
-            dq = (q_new - q).norm()
-            total_dq += dq
-
-            q = q_new
-            iter += 1
-
-            x = x_new
-            x_dot = x_dot_new
-            dt = min(max(ref_dt, 1 / x_dot.norm() * ref_dt), max_dt)
-
-            if total_time - current_time < dt:
-                dt = total_time - current_time
-
-        return x.reshape(-1, 3), x_dot.reshape(-1, 3) * total_time, iter, total_dq, q_dot.norm()
 
 
 if __name__ == "__main__":
