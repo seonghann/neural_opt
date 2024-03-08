@@ -17,7 +17,10 @@ if __name__ == '__main__':
     import torch
     from pytorch_lightning import Trainer
     from pytorch_lightning.callbacks import ModelCheckpoint
+    torch.set_default_dtype(torch.float32)
     use_gpu = config.general.gpus > 0 and torch.cuda.is_available()
+    devices = config.general.gpus if use_gpu else 1
+    strategy = config.general.strategy
     name = config.general.name
 
     callbacks = []
@@ -25,7 +28,7 @@ if __name__ == '__main__':
         checkpoint_callback = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
             filename='{epoch}',
-            monitor='val/epoch_NLL',
+            monitor='valid/loss',
             save_top_k=5,
             mode='min',
             every_n_epochs=1
@@ -40,17 +43,19 @@ if __name__ == '__main__':
 
     trainer = Trainer(
         gradient_clip_val=config.train.clip_grad,
-        strategy='ddp',
-        accelerator='gpu' if use_gpu else 'auto',
-        devices=config.general.gpus,
+        strategy=strategy,  # 'ddp',
+        accelerator='gpu' if use_gpu else 'cpu',
+        devices=devices,
         max_epochs=config.train.epochs,
         check_val_every_n_epoch=config.train.check_val_every_n_epoch,
-        fast_dev_run=name == 'debug',
+        fast_dev_run=10 if name == 'debug' else False,
         enable_progress_bar=True,
         callbacks=callbacks,
         log_every_n_steps=50 if name != 'debug' else 1,
         logger=[]
     )
+    print(trainer.strategy)
+    print(trainer.strategy.root_device)
 
     import os
     import pathlib

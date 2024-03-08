@@ -43,6 +43,13 @@ def redefine_edge_index(edges, batch, num_nodes):
     return index_tensor
 
 
+def sequence_length_mask(num_nodes, max_N=None):
+    if max_N is None:
+        max_N = torch.max(num_nodes)
+    mask = torch.arange(max_N).to(num_nodes.device).unsqueeze(0) < num_nodes.unsqueeze(1)
+    return mask
+
+
 def redefine_with_pad(src, batch, padding_value=0):
     src = unbatch(src, batch)
     return pad_sequence(src, padding_value=padding_value, batch_first=True)
@@ -449,18 +456,26 @@ class GeodesicSolver(object):
         """
         J = J.to_dense()
         U, S, Vh = torch.vmap(torch.linalg.svd)(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
-        mask = (S > 1e-9) & (S < thresh)  # select small (but nonzero) singular values
+        mask = S < thresh  # select small (but nonzero) singular values
+        len_mask = sequence_length_mask(3 * num_nodes - 6, max_N=S.size(1))
+        mask = torch.logical_and(mask, len_mask)
+
         coeff = torch.randn(mask.size()).to(x.device)  # coefficient for singular vectors for adjustment
         coeff = coeff.masked_fill(~mask, 0)  # only selected singular vectors
         coeff = coeff / ((coeff.pow(2).sum(-1, keepdim=True)).sqrt() + 1e-10) * scaler  # normalize and scale
 
+        if coeff.size(1) != Vh.size(1):
+            _ = torch.zeros(coeff.size(0), Vh.size(1)).to(coeff.device)
+            _[:, :coeff.size(1)] = coeff
+            coeff = _
         pos_adjust = (coeff.unsqueeze(-1) * Vh).sum(1).reshape(len(num_nodes), -1, 3)  # (B, n, 3)
         flag = mask.any()
         x += pos_adjust
+
         return x, flag
 
     def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
-                         pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3):
+                         pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, verbose=0):
         """
         Args:
             x (torch.Tensor): initial position tensor (B, n, 3)
@@ -489,7 +504,8 @@ class GeodesicSolver(object):
         x, flag = self.pos_adjust(x, J, num_nodes, scaler=pos_adjust_scaler, thresh=pos_adjust_thresh)
         if flag:
             # recompute jacobian
-            print("Adjusting positions because of numerical unstability...")
+            if verbose >= 1:
+                print("Adjusting positions because of numerical unstability...")
             J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
 
         J_inv = torch.stack([torch.linalg.pinv(j, rtol=1e-4, atol=self.svd_tol) for j in J])
@@ -575,6 +591,7 @@ class GeodesicSolver(object):
             batch: torch.Tensor, batch tensor (N, )
             num_nodes: torch.Tensor, number of nodes tensor (B, )
         """
+        # print(x.dtype)
         x, x_dot, total_time, q, q_dot, atom_type, index_tensor = self.batch_initialize(
             x,
             q_dot,
@@ -585,6 +602,7 @@ class GeodesicSolver(object):
             q_type=q_type,
             pos_adjust_scaler=pos_adjust_scaler,
             pos_adjust_thresh=pos_adjust_thresh,
+            verbose=verbose,
         )
         init = {
             "x": x.clone(),
@@ -625,6 +643,7 @@ class GeodesicSolver(object):
             q_dot_norm = q_dot.norm(dim=1)  # (B, )
             err = (q_dot_norm - init_q_dot_norm[~done]).abs() / init_q_dot_norm[~done]
             not_done_index = torch.where(~done)[0]
+
             if (err > err_thresh).any():
                 restart_index = not_done_index[err > err_thresh]
                 x_new[restart_index] = init["x"][restart_index]
@@ -642,13 +661,11 @@ class GeodesicSolver(object):
                     ban_index = ban_index.unique()
                     done[ban_index] = True
                     ref_dt[ban_index] = min_dt
-                    print(f"[Warning] Some samples ({new_ban}) are banned due to numerical unstability.")
 
                     if verbose >= 0:
-                        print(f"[Warning] (iter={cnt, iter[new_ban]+1})veolocity error is too large, restart with smaller time step.")
-                        torch.set_printoptions(precision=4, sci_mode=False)
+                        print(f"[Warning] Some samples ({new_ban}) are banned due to numerical unstability.")
+                        print(f"[Warning] veolocity error is too large, restart with smaller time step.")
                         print(f"err = {err[err > err_thresh]}")
-                        torch.set_printoptions()
 
                 update_index = not_done_index[err <= err_thresh]
                 current_time[update_index] += dt[update_index]
@@ -666,7 +683,9 @@ class GeodesicSolver(object):
             done[~done] = remain_time[~done] < 1e-6
 
             if verbose >= 1:
-                print(f"iter = {iter}, \n\tcurrent_time = \n\t{current_time}, \n\ttotal_time = \n\t{total_time}, \n\tdt = \n\t{dt}, \n\tdone = \n\t{done}")
+                ban_mask = torch.zeros_like(done).bool()
+                ban_mask[ban_index] = True
+                print(f"iter = {iter}, \n\tcurrent_time = \n\t{current_time}, \n\ttotal_time = \n\t{total_time}, \n\tdt = \n\t{dt}, \n\tref_dt ={ref_dt}, \n\tdone = \n\t{done}, \n\tban_mask = {ban_mask}\n\n")
             if cnt >= 2 * max_iter:
                 break
 
@@ -740,7 +759,7 @@ class GeodesicSolver(object):
             done: torch.BoolTensor, already finishied flag tensor (B, )
             dt: torch.Tensor, time step tensor (B, )
         """
-        dt = torch.tensor(dt[~done])
+        dt = dt[~done].clone().detach()
         if q_type == "morse":
             J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
         elif q_type == "DM":

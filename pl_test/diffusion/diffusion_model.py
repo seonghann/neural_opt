@@ -12,6 +12,18 @@ from utils.geodesic_solver import GeodesicSolver
 from diffusion.noise_scheduler import load_noise_scheduler
 from metrics.metrics import LossFunction, SamplingMetrics, TrainMetrics, ValidMetrics
 
+from torch_geometric.data import Batch
+
+torch.set_num_threads(8)
+
+
+def _masking(num_nodes):
+    N = num_nodes.max()
+    mask = torch.BoolTensor([True, False]).repeat(len(num_nodes)).to(num_nodes.device)
+    num_repeats = torch.stack([num_nodes, N - num_nodes]).T.flatten()
+    mask = mask.repeat_interleave(num_repeats)
+    return mask
+
 
 class BridgeDiffusion(pl.LightningModule):
     def __init__(self, config):
@@ -35,7 +47,7 @@ class BridgeDiffusion(pl.LightningModule):
         self.valid_sampling_metrics = SamplingMetrics(self.geodesic_solver, name='valid')
         self.test_sampling_metrics = SamplingMetrics(self.geodesic_solver, name='test')
 
-        self.solver_threshold = config.manifold.ode_solver.accuracy_threshold
+        self.solver_threshold = config.manifold.ode_solver.vpae_thresh
         self.save_dir = config.debug.save_dir
         self.best_valid_loss = 1e9
 
@@ -55,6 +67,11 @@ class BridgeDiffusion(pl.LightningModule):
 
         pred_q = self.forward(noisy_rxn_graph)
         pred_x = self.geodesic_solver.dq2dx(pred_q, pos, full_edge, rxn_graph.atom_type).reshape(-1, 3)
+
+        if pred_q.shape != target_q.shape:
+            print(f"pred_q.shape : {pred_q.shape}")
+            print(f"target_q.shape : {target_q.shape}")
+            print(f"noisy_rxn_graph : {noisy_rxn_graph}")
 
         loss = self.train_loss(
             pred_x=pred_x,
@@ -94,11 +111,14 @@ class BridgeDiffusion(pl.LightningModule):
         return index, t, sampled_SNR_ratio
 
     def apply_noise(self, data):
+        dev = data.pos.device
+        data = data.to("cpu")
         graph = self.rxn_graph.from_batch(data)
         full_edge, _, _ = graph.full_edge(upper_triangle=True)
 
         node2graph = graph.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
 
         # sampling time step
         t_index, tt, SNR_ratio = self.noise_level_sampling(data)  # (G, ), (G, ), (G, )
@@ -113,52 +133,131 @@ class BridgeDiffusion(pl.LightningModule):
         sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
 
         sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (E, )
-        noise = torch.randn(size=(full_edge.size(1),), device=full_edge.device) * sigma_hat_edge  # dq, (E, )
+        noise = torch.randn(size=(full_edge.size(1),), device=full_edge.device) * sigma_hat_edge.sqrt()  # dq, (E, )
 
         # apply noise
-        pos_noise, x_dot, iter, total_dq, expected_dq = self.geodesic_solver.geodesic_ode_solve(
+        init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
             mean,
             noise,
             full_edge,
             graph.atom_type,
+            node2graph,
+            num_nodes,
+            num_iter=self.config.manifold.ode_solver.iter,
+            max_iter=self.config.manifold.ode_solver.max_iter,
+            ref_dt=self.config.manifold.ode_solver.ref_dt,
+            min_dt=self.config.manifold.ode_solver.min_dt,
+            max_dt=self.config.manifold.ode_solver.max_dt,
+            err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+            verbose=0,
+            method="Heun",
+            pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+            pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
         )
 
-        # Check stability, percent error > threshold, then re-solve
-        p_err = (abs(total_dq - expected_dq) / expected_dq) * 100
-        if p_err > self.solver_threshold:
-            self.print(f"[Warnning] geodesic solver percent error {p_err:0.2f}% > tol ({self.solver_threshold}%), Retry...")
-            pos_noise, x_dot, iter, total_dq, expected_dq = self.geodesic_solver.geodesic_ode_solve(
-                mean,
-                noise,
-                full_edge,
-                graph.atom_type,
-                num_iter=1000,
-                ref_dt=5e-3,
-                max_dt=5e-2
-            )
-            p_err = abs(total_dq - expected_dq) / expected_dq
-            if p_err > self.solver_threshold:
-                self.print(f"[Warnning] geodesic solver percent error {p_err:0.2f}% > tol ({self.solver_threshold}%), Terminate...")
-                save_ = {
-                    "mu": mean,
-                    "noise": noise,
-                    "edge": full_edge,
-                    "atom_type": graph.atom_type
-                }
-                f = osp.join(self.save_dir, "error_batch.pt")
-                torch.save(save_, f)
-                # f = osp.join(self.save_dir, "abnormal_termination.pt")
-                # self.save_model(f)
-                raise ValueError("Unexpectedly inaccurate geodesic path.")
+        batch_pos_noise = last["x"]  # (B, n, 3)
+        batch_x_dot = last["x_dot"]  # (B, n, 3)
+        unbatch_node_mask = _masking(num_nodes)
+        pos_noise = batch_pos_noise.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
+        x_dot = batch_x_dot.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
 
-        beta = self.noise_schedule.get_beta(tt)
-        coeff = beta / sigma_hat
+        batch_q_dot = last["q_dot"]  # (B, e)
+        e = batch_q_dot.size(1)
+        unbatch_edge_index = index_tensor[1] + index_tensor[0] * e
+        q_dot = batch_q_dot.reshape(-1)[unbatch_edge_index]  # (E, )
+
+        # Check stability, percent error > threshold, then re-solve
+        retry_index = stats["ban_index"].sort().values
+        if len(retry_index) > 0:
+            node_select = torch.isin(node2graph, retry_index)
+            edge_select = torch.isin(edge2graph, retry_index)
+            _batch = torch.arange(len(retry_index), device=mean.device).repeat_interleave(num_nodes[retry_index])
+            _num_nodes = num_nodes[retry_index]
+            _num_edges = _num_nodes * (_num_nodes - 1) // 2
+            _ptr = torch.cat([torch.zeros(1, dtype=torch.long), _num_nodes.cumsum(0)])
+            _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
+
+            self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(data)}, Retry...")
+            _init, _last, _iter, _index_tensor, _stats = self.geodesic_solver.batch_geodesic_ode_solve(
+                mean[node_select],
+                noise[edge_select],
+                _full_edge,
+                graph.atom_type[node_select],
+                _batch,
+                _num_nodes,
+                num_iter=self.config.manifold.ode_solver.iter,
+                max_iter=self.config.manifold.ode_solver.max_iter,
+                ref_dt=self.config.manifold.ode_solver._ref_dt,
+                min_dt=self.config.manifold.ode_solver._min_dt,
+                max_dt=self.config.manifold.ode_solver._max_dt,
+                err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+                verbose=0,
+                method="RK4",
+                pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+                pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+            )
+
+            _batch_pos_noise = _last["x"]  # (b, n', 3)
+            _batch_x_dot = _last["x_dot"]  # (b, n', 3)
+            _unbatch_node_mask = _masking(_num_nodes)
+            _pos_noise = _batch_pos_noise.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+            _x_dot = _batch_x_dot.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+
+            _batch_q_dot = _last["q_dot"]  # (b, e')
+            _e = _batch_q_dot.size(1)
+            _unbatch_edge_index = _index_tensor[1] + _index_tensor[0] * _e
+            _q_dot = _batch_q_dot.reshape(-1)[_unbatch_edge_index]  # (E', )
+
+            pos_noise[node_select] = _pos_noise
+            x_dot[node_select] = _x_dot
+            q_dot[edge_select] = _q_dot
+
+            ban_index = _stats["ban_index"].sort().values
+            ban_index = retry_index[ban_index]
+
+        else:
+            ban_index = torch.LongTensor([])
+
+        # beta = self.noise_schedule.get_beta(tt)
+        # coeff = beta / sigma_hat
+        coeff = 1 / sigma_hat.sqrt()
         coeff_node = coeff.index_select(0, node2graph)  # (N, )
+        coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
         # target is not exactly the score function.
         # target = beta * score
         target_x = - x_dot * coeff_node.unsqueeze(-1)
-        target_q = self.geodesic_solver.dx2dq(target_x, pos_noise, full_edge, graph.atom_type)
+        target_q = - q_dot * coeff_edge
 
+        if len(ban_index) > 0:
+            rxn_idx = data.rxn_idx[ban_index]
+            self.print(f"[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}\n"
+                        f"rxn_idx: {rxn_idx}\n time index: {t_index[ban_index]}")
+            ban_node_mask = torch.isin(node2graph, ban_index)
+            ban_edge_mask = torch.isin(edge2graph, ban_index)
+            ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)
+
+            data = Batch.from_data_list(data[~ban_batch_mask])
+            graph = self.rxn_graph.from_batch(data)
+
+            pos_noise = pos_noise[~ban_node_mask]
+            x_dot = x_dot[~ban_node_mask]
+            pos_init = pos_init[~ban_node_mask]
+            tt = tt[~ban_batch_mask]
+            target_x = target_x[~ban_node_mask]
+            print(
+                f"Debuging] ban_edge_mask.shape : {ban_edge_mask.shape}"
+                f"ban_edge_mask.sum() : {ban_edge_mask.sum()}"
+                f"target_q.shape : {target_q.shape}"
+                f"target_q[~ban_edge_mask].shape : {target_q[~ban_edge_mask].shape}"
+            )
+            target_q = target_q[~ban_edge_mask]
+
+        graph = graph.to(dev)
+        pos_noise = pos_noise.to(dev)
+        pos_init = pos_init.to(dev)
+        tt = tt.to(dev)
+        target_x = target_x.to(dev)
+        target_q = target_q.to(dev)
         return graph, pos_noise, pos_init, tt, target_x, target_q
 
     def configure_optimizers(self):
@@ -229,6 +328,7 @@ class BridgeDiffusion(pl.LightningModule):
         if loss < self.best_valid_loss:
             self.best_valid_loss = loss
 
+        self.log("valid/loss", loss)
         self.val_counter += 1
         self.print(f"Epoch {self.current_epoch} Validation Loss: {loss: 0.3f} Best loss: {self.best_valid_loss}")
         if (self.val_counter) % self.config.train.sample_every_n_valid == 0:
@@ -249,7 +349,7 @@ class BridgeDiffusion(pl.LightningModule):
                 local_rank=self.local_rank
             )
             self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
-        print("Test epoch end ends...")
+        print("Validation epoch end ends...")
 
     def on_test_epoch_start(self) -> None:
         self.print("Starting test ...")

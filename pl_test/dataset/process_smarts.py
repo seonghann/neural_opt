@@ -8,7 +8,6 @@ import numpy as np
 import torch
 
 
-
 def process_smarts(rxn_smarts):
     r_smarts, p_smarts = rxn_smarts.split(">>")
 

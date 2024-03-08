@@ -88,7 +88,7 @@ class TrainMetrics(nn.Module):
 class ValidMetrics(nn.Module):
     def __init__(self, manifold, name='valid' ):
         super().__init__()
-        self.name=name
+        self.name = name
         self.rmsd_metrics = MetricRMSD()
         self.norm_metrics = MetricNorm()
         self.proj_metrics = MetricProj()
@@ -197,8 +197,8 @@ class SquareErrorPerBond(Metric):
 class MetricProj(Metric):
     def __init__(self, ):
         super().__init__()
-        self.add_state("total_norm", default=torch.tensor(0.))
-        self.add_state("total_samples", default=torch.tensor(0.))
+        self.add_state("total_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, proj, pred, target, merge):
         """
@@ -224,8 +224,8 @@ class MetricProj(Metric):
 class MetricRMSD(Metric):
     def __init__(self, ):
         super().__init__()
-        self.add_state("total_rmsd", default=torch.tensor(0.))
-        self.add_state("total_samples", default=torch.tensor(0.))
+        self.add_state("total_rmsd", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, pred, target, merge):
         """
