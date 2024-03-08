@@ -110,6 +110,19 @@ class BridgeDiffusion(pl.LightningModule):
         sampled_SNR_ratio = SNR_ratio[(torch.arange(SNR_ratio.size(0)).to(index), index)]
         return index, t, sampled_SNR_ratio
 
+        # def apply_noise_debug(self, data):
+        #     dev = data.pos.device
+        #     graph = self.rxn_graph.from_batch(data)
+        #     full_edge, _, _ = graph.full_edge(upper_triangle=True)
+
+        #     pos_init = data.pos[:, -1]
+        #     pos = data.pos[:, 0] + torch.randn_like(data.pos[:, 0]) * 1e-4
+        #     target_x = torch.randn_like(data.pos[:, 0]) * 1e-4
+        #     target_q = torch.randn(size=(graph.edge_index[0].size()), device=dev) * 1e-4
+        #     tt = torch.rand(size=(data.num_graphs, ), device=dev)
+        #     pos_noise = pos
+        #     return graph, pos_noise, pos_init, tt, target_x, target_q
+
     def apply_noise(self, data):
         dev = data.pos.device
         data = data.to("cpu")
@@ -424,12 +437,15 @@ class BridgeDiffusion(pl.LightningModule):
 
         full_edge, _, _ = dynamic_rxn_graph.full_edge(upper_triangle=True)
         t = torch.ones_like(full_edge[0])
-        dt = self.config.sampling.sde_dt
+        dt = t * self.config.sampling.sde_dt
 
-        while (t > 0).any():
+        while (t > 1e-6).any():
+
+            dt = dt.clip(max=t)
             score = self.forward(dynamic_rxn_graph)
             # score already contains beta
             beta = self.noise_schedule.get_beta(t)
+            score *= beta
             if stochastic:
                 # debug, check all variables' shape
                 dw = torch.sqrt(beta * dt) * torch.randn_like(score)
@@ -437,34 +453,78 @@ class BridgeDiffusion(pl.LightningModule):
             else:
                 dq = 0.5 * score * dt
 
+            node2graph = batch.batch
+            edge2graph = node2graph.index_select(0, full_edge[0])
+            num_nodes = batch.ptr[1:] - batch.ptr[:-1]
+
             pos = dynamic_rxn_graph.pos
-            pos_tm1, pos_dot, iter, total_dq, q_dotnorm = self.geodesic_solver.geodesic_ode_solve(
+            init, last, iter, index_tensor, stats = self.geodesic_solver.geodesic_ode_solve(
                 pos,
                 dq,
                 full_edge,
                 dynamic_rxn_graph.atom_type,
-                num_iter=self.config.sampling.gode_iter,
-                ref_dt=self.config.sampling.gode_ref_dt,
-                max_dt=self.config.sampling.gode_max_dt
+                node2graph,
+                num_nodes,
+                num_iter=self.config.manifold.ode_solver.iter,
+                max_iter=self.config.manifold.ode_solver.max_iter,
+                ref_dt=self.config.manifold.ode_solver.ref_dt,
+                min_dt=self.config.manifold.ode_solver.min_dt,
+                max_dt=self.config.manifold.ode_solver.max_dt,
+                err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+                verbose=0,
+                method="Heun",
+                pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+                pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
             )
 
-            p_err = abs(total_dq - q_dotnorm) / q_dotnorm
-            if p_err > self.solver_threshold:
-                pos_tm1, pos_dot, iter, total_dq, q_dotnorm = self.geodesic_solver.geodesic_ode_solve(
-                    pos,
-                    dq,
-                    full_edge,
-                    dynamic_rxn_graph.atom_type,
-                    num_iter=1000,
-                    ref_dt=5e-3,
-                    max_dt=5e-2
-                )
-                p_err = abs(total_dq - q_dotnorm) / q_dotnorm
-                if p_err > self.solver_threshold:
-                    raise ValueError("Unexpectedly inaccurate geodesic path.")
+            batch_pos_tm1 = last["x"]  # (B, n, 3)
+            unbatch_node_mask = _masking(num_nodes)
+            pos_tm1 = batch_pos_tm1.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
 
-            if (t < dt).any():
-                dt = t
+            retry_index = stats["ban_index"].sort().values
+            if len(retry_index) > 0:
+                node_select = torch.isin(node2graph, retry_index)
+                edge_select = torch.isin(edge2graph, retry_index)
+                _batch = torch.arange(len(retry_index), device=pos.device).repeat_interleave(num_nodes[retry_index])
+                _num_nodes = num_nodes[retry_index]
+                _num_edges = _num_nodes * (_num_nodes - 1) // 2
+                _ptr = torch.cat([torch.zeros(1, dtype=torch.long), _num_nodes.cumsum(0)])
+                _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
+
+                self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(batch)}, Retry...")
+                _init, _last, _iter, _index_tensor, _stats = self.geodesic_solver.batch_geodesic_ode_solve(
+                    pos[node_select],
+                    dq[edge_select],
+                    _full_edge,
+                    dynamic_rxn_graph.atom_type[node_select],
+                    _batch,
+                    _num_nodes,
+                    num_iter=500,
+                    max_iter=2000,
+                    ref_dt=self.config.manifold.ode_solver._ref_dt,
+                    min_dt=self.config.manifold.ode_solver._min_dt,
+                    max_dt=self.config.manifold.ode_solver._max_dt,
+                    err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+                    verbose=0,
+                    method="RK4",
+                    pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+                    pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+                )
+
+                _batch_pos_tm1 = _last["x"]  # (b, n', 3)
+                _unbatch_node_mask = _masking(_num_nodes)
+                _pos_tm1 = _batch_pos_tm1.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+
+                pos_tm1[node_select] = _pos_tm1
+
+                ban_index = _stats["ban_index"].sort().values
+                ban_index = retry_index[ban_index]
+
+            if len(ban_index) > 0:
+                rxn_idx = batch.rxn_idx[ban_index]
+                self.print(f"[Warning] geodesic solver failed solving reaction {rxn_idx}, at time {t[ban_index]}\n")
+                ban_node_mask = torch.isin(node2graph, ban_index)
+                pos_tm1[ban_node_mask] = pos[ban_node_mask] + torch.randn_like(pos[ban_node_mask]) * 1e-3
 
             t = t - dt
             pos = pos_tm1
