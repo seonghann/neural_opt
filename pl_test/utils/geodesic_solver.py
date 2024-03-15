@@ -5,6 +5,27 @@ from torch.nn.utils.rnn import pad_sequence
 from torch import vmap
 
 
+from time import time
+
+def timer(func):
+    """Check time.
+
+    Usage)
+    >>> @timer
+    >>> def method1(...):
+    >>>     ...
+    >>>     return
+    """
+
+    def wrapper(*args, **kwargs):
+        start = time()
+        result = func(*args, **kwargs)
+        end = time()
+        print(f"Elapsed time[{func.__name__}]: {end - start} sec", flush=True)
+        return result
+
+    return wrapper
+
 def redefine_edge_index(edges, batch, num_nodes):
     """
     Given edge_index are block diagonal.
@@ -454,8 +475,7 @@ class GeodesicSolver(object):
             J (torch.Tensor): jacobian tensor (B, e, 3n)
             num_nodes (torch.Tensor): number of nodes for each graph (B, )
         """
-        J = J.to_dense()
-        U, S, Vh = torch.vmap(torch.linalg.svd)(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
+        U, S, Vh = batch_svd1(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
         mask = S < thresh  # select small (but nonzero) singular values
         len_mask = sequence_length_mask(3 * num_nodes - 6, max_N=S.size(1))
         mask = torch.logical_and(mask, len_mask)
@@ -508,8 +528,7 @@ class GeodesicSolver(object):
                 print("Adjusting positions because of numerical unstability...")
             J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
 
-        J_inv = torch.stack([torch.linalg.pinv(j, rtol=1e-4, atol=self.svd_tol) for j in J])
-        # J_inv = vmap(torch.linalg.pinv)(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
+        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
 
         x_dot = torch.bmm(J_inv, q_dot.unsqueeze(-1)).reshape(B, n, 3)  # (B, n, 3)
         q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
@@ -621,10 +640,11 @@ class GeodesicSolver(object):
         current_time = torch.zeros_like(total_time)  # (B, )
         iter = torch.zeros_like(total_time, dtype=torch.long)  # (B, )
         done = total_time <= (current_time + 1e-6)  # (B, )
-        ban_index = torch.LongTensor([])
+        ban_index = torch.LongTensor([]).to(device=x.device)
 
         cnt = 0
         while (~done).any() and (iter[~done] < max_iter).any():
+
             x_new, x_dot_new, q_dot = self.batch_advance(
                 x, x_dot,
                 index_tensor,
@@ -653,7 +673,7 @@ class GeodesicSolver(object):
                 current_time[restart_index] = 0
                 iter[restart_index] = 0
 
-                new_ban = torch.where(ref_dt < min_dt)[0].cpu()
+                new_ban = torch.where(ref_dt < min_dt)[0]
                 _ = torch.isin(new_ban, not_done_index[err > err_thresh])
                 new_ban = new_ban[_]
                 if new_ban.numel() > 0:
@@ -693,7 +713,8 @@ class GeodesicSolver(object):
             q_last = self.batch_compute_q(index_tensor, atom_type, x)
         elif q_type == "DM":
             q_last = self.batch_compute_d(index_tensor, x)
-        J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+
+        J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()
         x_dot *= total_time.reshape(-1, 1, 1)
         q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
         last = {"x": x, "x_dot": x_dot, "q": q_last, "q_dot": q_dot}
@@ -734,6 +755,7 @@ class GeodesicSolver(object):
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]  # sparse
         J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
+        J = J.to_dense()
 
         if return_qdot:
             q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
@@ -768,6 +790,7 @@ class GeodesicSolver(object):
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
         J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
+        J = J.to_dense()
 
         if return_qdot:
             q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
@@ -793,6 +816,7 @@ class GeodesicSolver(object):
 
         return x, x_dot, q_dot
 
+
     def batch_advance_rk4(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
         """
         Args:
@@ -812,6 +836,7 @@ class GeodesicSolver(object):
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
         J = J.index_select(0, not_done_index)
+        J = J.to_dense()
 
         if return_qdot:
             q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
@@ -866,16 +891,35 @@ class GeodesicSolver(object):
         return dx, dx_dot
 
     def batch_christoffel(self, index_tensor, atom_type, x, J, not_done_index):
-        J = J.to_dense()
         n3 = x.size(1) * 3
         B = not_done_index.numel()
         hess = self.sparse_batch_hessian_q(index_tensor, atom_type, x)  # sparse (B, 3n * 3n, e)
         hess = hess.index_select(0, not_done_index)  # sparse (B, 3n * 3n, e)
-        J_inv = vmap(torch.linalg.pinv)(J, rtol=1e-4, atol=self.svd_tol).transpose(-1, -2)  # dense (B, e, 3n)
+        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol).transpose(-1, -2)  # dense (B, e, 3n)
 
         christoffel = torch.bmm(hess, J_inv).transpose(-1, -2).reshape(B, n3, n3, n3)
         # Gamma^k_ij = christoffel[:, k, i, j]
         return christoffel
+
+
+def batch_pinv1(J, rtol=1e-4, atol=None):
+    return vmap(torch.linalg.pinv)(J.to_dense(), rtol=rtol, atol=atol)
+
+
+def batch_pinv2(J, rtol=1e-4, atol=None):
+    def sparse_pinv(x):
+        return torch.linalg.pinv(x.to_dense(), rtol=rtol, atol=atol)
+    return vmap(sparse_pinv)(J)
+
+
+def batch_svd1(J):
+    return vmap(torch.linalg.svd)(J.to_dense())
+
+
+def batch_svd2(J):
+    def sparse_svd(x):
+        return torch.linalg.svd(x.to_dense())
+    return vmap(sparse_svd)(J)
 
 
 if __name__ == "__main__":
