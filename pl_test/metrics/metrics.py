@@ -2,6 +2,7 @@ from torchmetrics import Metric, MetricCollection
 from torch_scatter import scatter_mean, scatter_sum
 import torch
 import torch.nn as nn
+import numpy as np
 import wandb
 
 
@@ -9,8 +10,8 @@ class LossFunction(nn.Module):
     def __init__(self, _lambda, name='train'):
         super().__init__()
         self.name = name
-        self.metric_x = MetricRMSD()
-        self.metric_q = MetricNorm()
+        self.metric_x = SquareLoss("euclidean")
+        self.metric_q = SquareLoss("riemannian")
         self._lambda = _lambda
 
     def reset(self,):
@@ -29,16 +30,16 @@ class LossFunction(nn.Module):
         return loss_q + self._lambda * loss_x
 
     def log_epoch_metrics(self,):
-        epoch_metric_x = self.metric_x.compute()
-        epoch_metric_q = self.metric_q.compute()
-
         to_log = {}
-        to_log[f"{self.name}_epoch/loss_x"] = epoch_metric_x.item()
-        to_log[f"{self.name}_epoch/loss_q"] = epoch_metric_q.item()
+        loss_x = self.metric_x.compute().item()
+        loss_q = self.metric_q.compute().item()
+        loss = loss_q + self._lambda * loss_x
+        to_log[f"{self.name}_epoch/loss_x"] = loss_x
+        to_log[f"{self.name}_epoch/loss_q"] = loss_q
+        to_log[f"{self.name}_epoch/loss"] = loss
         if wandb.run:
             wandb.log(to_log)
-
-        return epoch_metric_x, epoch_metric_q
+        return to_log
 
 
 class TrainMetrics(nn.Module):
@@ -65,8 +66,9 @@ class TrainMetrics(nn.Module):
         self.norm_metrics(pred_q, target_q, edge2graph)
         if log:
             to_log = {}
-            to_log[f'{self.name}/rmsd'] = self.rmsd_metrics.compute()
-            to_log[f'{self.name}/norm'] = self.norm_metrics.compute()
+            for metric in [self.rmsd_metrics, self.norm_metrics]:
+                for k, v in metric.compute().items():
+                    to_log[f'{self.name}/{k}'] = v
             if wandb.run:
                 wandb.log(to_log)
 
@@ -75,23 +77,26 @@ class TrainMetrics(nn.Module):
             metric.reset()
 
     def log_epoch_metrics(self,):
-        epoch_metric_x = self.rmsd_metrics.compute()
-        epoch_metric_q = self.norm_metrics.compute()
         to_log = {}
-        to_log["train_epoch/rmsd"] = epoch_metric_x
-        to_log["train_epoch/norm"] = epoch_metric_q
+        for metric in [self.rmsd_metrics, self.norm_metrics]:
+            for k, v in metric.compute().items():
+                to_log[f'{self.name}/{k}'] = v
         if wandb.run:
             wandb.log(to_log)
-        return epoch_metric_x, epoch_metric_q
+
+        return to_log
 
 
 class ValidMetrics(nn.Module):
-    def __init__(self, manifold, name='valid' ):
+    def __init__(self, manifold, name='valid', _lambda=0.01):
         super().__init__()
         self.name = name
         self.rmsd_metrics = MetricRMSD()
         self.norm_metrics = MetricNorm()
         self.proj_metrics = MetricProj()
+        self.loss_x = SquareLoss("euclidean")
+        self.loss_q = SquareLoss("riemannian")
+        self._lambda = _lambda
         self.manifold = manifold
 
     def forward(
@@ -109,17 +114,22 @@ class ValidMetrics(nn.Module):
         pos=None,
         log=False
     ):
+
         self.rmsd_metrics(pred_x, target_x, node2graph)
         self.norm_metrics(pred_q, target_q, edge2graph)
+        # TODO : Jacobian product should be done with bmm style
         J = self.manifold.jacobian_q(edge_index, atom_type, pos)
         J_inv = torch.linalg.pinv(J, rtol=1e-4, atol=self.manifold.svd_tol)
         proj_q = J @ J_inv @ pred_q
         self.proj_metrics(proj_q, pred_q, target_q, edge2graph)
+        loss_x = self.loss_x(pred_x, target_x, node2graph)
+        loss_q = self.loss_q(pred_q, target_q, edge2graph)
+        loss = loss_q + self._lambda * loss_x
         if log:
-            to_log = {}
-            to_log[f'{self.name}/rmsd'] = self.rmsd_metrics.compute()
-            to_log[f'{self.name}/norm'] = self.norm_metrics.compute()
-            to_log[f'{self.name}/proj'] = self.proj_metrics.compute()
+            to_log = {f"{self.name}/loss": loss.item()}
+            for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+                for k, v in metric.compute().items():
+                    to_log[f'{self.name}/{k}'] = v
             if wandb.run:
                 wandb.log(to_log)
 
@@ -128,22 +138,24 @@ class ValidMetrics(nn.Module):
             metric.reset()
 
     def log_epoch_metrics(self,):
-        epoch_metric_x = self.rmsd_metrics.compute()
-        epoch_metric_q = self.norm_metrics.compute()
-        epoch_metric_proj = self.proj_metrics.compute()
-        to_log = {}
-        to_log[f"{self.name}_epoch/rmsd"] = epoch_metric_x
-        to_log[f"{self.name}_epoch/norm"] = epoch_metric_q
-        to_log[f"{self.name}_epoch/proj"] = epoch_metric_proj
+        loss_x = self.loss_x.compute()
+        loss_q = self.loss_q.compute()
+        loss = loss_q + self._lambda * loss_x
+        to_log = {f"{self.name}_epoch/loss": loss}
+        for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+            for k, v in metric.compute().items():
+                to_log[f'{self.name}_epoch/{k}'] = v
         if wandb.run:
             wandb.log(to_log)
-        return epoch_metric_x, epoch_metric_q, epoch_metric_proj
+
+        return to_log
 
 
 class SamplingMetrics(nn.Module):
     def __init__(self, manifold, name='test'):
         super().__init__()
         self.name = name
+        self.dmae_metrics = MetricDMAE()
         self.rmsd_metrics = MetricRMSD()
         self.norm_metrics = MetricNorm()
         self.manifold = manifold
@@ -152,26 +164,29 @@ class SamplingMetrics(nn.Module):
         for sample in samples:
             x_gen = sample.traj[:, 0].to(sample.pos.device)
             x_true = sample.pos[:, 0]
+            num_atoms = x_gen.size(0)
             atom_type = sample.x
-            edge_index = sample.edge_index
+            edge_index = torch.LongTensor(np.triu_indices(num_atoms, k=1)) # full_edges
             q_gen = self.manifold.compute_q(edge_index, atom_type, x_gen)
             q_true = self.manifold.compute_q(edge_index, atom_type, x_true)
+            d_gen = self.manifold.compute_d(edge_index, x_gen)
+            d_true = self.manifold.compute_d(edge_index, x_true)
 
             nodes = torch.zeros_like(atom_type)
             edges = torch.zeros_like(edge_index[0])
             self.rmsd_metrics(x_gen, x_true, nodes)
             self.norm_metrics(q_gen, q_true, edges)
-        rmsd = self.rmsd_metrics.compute()
-        norm = self.norm_metrics.compute()
+            self.dmae_metrics(d_gen, d_true, edges)
 
         if wandb.run:
             to_log = {}
-            to_log[f"{self.name}_sampling/rmsd"] = rmsd
-            to_log[f"{self.name}_sampling/norm"] = norm
+            for metric in [self.rmsd_metrics, self.norm_metrics, self.dmae_metrics]:
+                for k, v in metric.compute().items():
+                    to_log[f"{self.name}_sampling/{k}"] = v
             wandb.log(to_log)
 
     def reset(self):
-        for metric in [self.rmsd_metrics, self.norm_metrics]:
+        for metric in [self.rmsd_metrics, self.norm_metrics, self.dmae_metrics]:
             metric.reset()
 
 
@@ -194,37 +209,43 @@ class SquareErrorPerBond(Metric):
         pass
 
 
-class MetricProj(Metric):
-    def __init__(self, ):
+class SquareLoss(Metric):
+    def __init__(self, name):
         super().__init__()
-        self.add_state("total_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.name = name
+        self.add_state(f"total_square_err_{name}", default=torch.tensor(0.), dist_reduce_fx="sum")
         self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
-    def update(self, proj, pred, target, merge):
+    def update(self, pred, target, merge):
         """
         Update state with predictions and targets.
         Args:
-            proj: Projected predictions from model (E,)
-            pred: Predictions from model (E,)
-            target: Ground truth labels (E,)
-            merge: Batch index for each edge (E,)
+            pred: Predictions from model (n, 3) or (E,)
+            target: Ground truth labels (n, 3) or (E,)
+            merge: Batch index for each atom (n,) or edge (E,)
         """
-        squre_err = (pred - proj) ** 2
-        norm = torch.sqrt(scatter_sum(squre_err, merge))
-        self.total_norm += norm.sum()
-        self.total_samples += norm.numel()
+        if self.name == "euclidean":
+            square_err = torch.sum((pred - target) ** 2, dim=-1)
+        elif self.name == "riemannian":
+            square_err = (pred - target) ** 2
+        square_err = scatter_sum(square_err, merge)
+
+        state = self.__getstate__()
+        state[f"total_square_err_{self.name}"] += square_err.sum()
+        self.total_samples += square_err.numel()
 
     def compute(self):
-        """
-        Computes the metric based on the state collected.
-        """
-        return self.total_norm / self.total_samples
+        state = self.__getstate__()
+        return state[f"total_square_err_{self.name}"] / self.total_samples
 
 
 class MetricRMSD(Metric):
     def __init__(self, ):
         super().__init__()
         self.add_state("total_rmsd", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_perr_rmsd", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_pred_size_rmsd", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_target_size_rmsd", default=torch.tensor(0.), dist_reduce_fx="sum")
         self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, pred, target, merge):
@@ -237,20 +258,34 @@ class MetricRMSD(Metric):
         """
         square_err = torch.sum((pred - target) ** 2, dim=-1)
         rmsd = torch.sqrt(scatter_mean(square_err, merge))
+
+        denom = torch.sqrt(scatter_mean(torch.sum(target ** 2, dim=-1), merge))
+        perr = rmsd / denom
+        pred_size = torch.sqrt(scatter_mean(torch.sum(pred ** 2, dim=-1), merge))
+
         self.total_rmsd += rmsd.sum()
+        self.total_perr_rmsd += perr.sum()
+        self.total_pred_size_rmsd += pred_size.sum()
+        self.total_target_size_rmsd += denom.sum()
         self.total_samples += rmsd.numel()
 
     def compute(self):
         """
         Computes the metric based on the state collected.
         """
-        return self.total_rmsd / self.total_samples
+        stats = {
+            "pred_target_rmsd_err": self.total_rmsd / self.total_samples,
+            "pred_target_rmsd_perr": self.total_perr_rmsd / self.total_samples,
+            "pred_size_rmsd": self.total_pred_size_rmsd / self.total_samples,
+            "target_size_rmsd": self.total_target_size_rmsd / self.total_samples,
+        }
+        return stats
 
 
-class MetricNorm(Metric):
+class MetricDMAE(Metric):
     def __init__(self, ):
         super().__init__()
-        self.add_state("total_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_dmae", default=torch.tensor(0.), dist_reduce_fx="sum")
         self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
     def update(self, pred, target, merge):
@@ -261,17 +296,116 @@ class MetricNorm(Metric):
             target: Ground truth labels (E,)
             merge: Batch index for each edge (E,)
         """
-        squre_err = (pred - target) ** 2
-        norm = torch.sqrt(scatter_sum(squre_err, merge))
-        self.total_norm += norm.sum()
-        self.total_samples += norm.numel()
+        abs_err = (pred - target).abs()
+        dmae = scatter_mean(abs_err, merge)
+
+        self.total_dmae += dmae.sum()
+        self.total_samples += dmae.numel()
 
     def compute(self):
         """
         Computes the metric based on the state collected.
         """
-        return self.total_norm / self.total_samples
+        stats = {
+            "pred_target_dmae_err": self.total_dmae / self.total_samples,
+        }
+        return stats
 
+
+class MetricNorm(Metric):
+    def __init__(self, ):
+        super().__init__()
+        self.add_state("total_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_perr_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_pred_size_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_target_size_norm", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
+
+    def update(self, pred, target, merge):
+        """
+        Update state with predictions and targets.
+        Args:
+            pred: Predictions from model (E,)
+            target: Ground truth labels (E,)
+            merge: Batch index for each edge (E,)
+        """
+        square_err = (pred - target) ** 2
+        norm_err = torch.sqrt(scatter_sum(square_err, merge))
+
+        denom = torch.sqrt(scatter_sum(target ** 2, merge))
+        perr = norm_err / denom
+        pred_size = torch.sqrt(scatter_sum(pred ** 2, merge))
+
+        self.total_norm += norm_err.sum()
+        self.total_perr_norm += perr.sum()
+        self.total_pred_size_norm += pred_size.sum()
+        self.total_target_size_norm += denom.sum()
+        self.total_samples += norm_err.numel()
+
+    def compute(self):
+        """
+        Computes the metric based on the state collected.
+        """
+        stats = {
+            "pred_target_norm_err": self.total_norm / self.total_samples,
+            "pred_target_norm_perr": self.total_perr_norm / self.total_samples,
+            "pred_size_norm": self.total_pred_size_norm / self.total_samples,
+            "target_size_norm": self.total_target_size_norm / self.total_samples
+        }
+        return stats
+
+
+class MetricProj(Metric):
+    def __init__(self, ):
+        super().__init__()
+        self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_proj_target_err", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_proj_target_perr", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_proj_pred_ratio", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_proj_pred_cos_angle", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("total_proj_target_cos_angle", default=torch.tensor(0.), dist_reduce_fx="sum")
+
+    def update(self, proj, pred, target, merge):
+        """
+        Update state with predictions and targets.
+        Args:
+            proj: Projected predictions from model (E,)
+            pred: Predictions from model (E,)
+            target: Ground truth labels (E,)
+            merge: Batch index for each edge (E,)
+        """
+        proj_target_err = (proj - target) ** 2
+        proj_target_err = torch.sqrt(scatter_sum(proj_target_err, merge))
+
+        denom = torch.sqrt(scatter_sum(target ** 2, merge))
+        perr = proj_target_err / denom
+
+        proj_size = torch.sqrt(scatter_sum(proj ** 2, merge))
+        pred_size = torch.sqrt(scatter_sum(pred ** 2, merge))
+        proj_ratio = proj_size / pred_size
+
+        pred_proj_cos_angle = scatter_sum(proj * pred, merge) / (proj_size * pred_size)
+        target_proj_cos_angle = scatter_sum(proj * target, merge) / (proj_size * denom)
+
+        self.total_samples += proj_target_err.numel()
+        self.total_proj_target_err += proj_target_err.sum()
+        self.total_proj_target_perr += perr.sum()
+        self.total_proj_pred_ratio += proj_ratio.sum()
+        self.total_proj_pred_cos_angle += pred_proj_cos_angle.sum()
+        self.total_proj_target_cos_angle += target_proj_cos_angle.sum()
+
+    def compute(self):
+        """
+        Computes the metric based on the state collected.
+        """
+        stats = {
+            "proj_target_err": self.total_proj_target_err / self.total_samples,
+            "proj_target_perr": self.total_proj_target_perr / self.total_samples,
+            "proj_pred_ratio": self.total_proj_pred_ratio / self.total_samples,
+            "proj_pred_cos_angle": self.total_proj_pred_cos_angle / self.total_samples,
+            "proj_target_cos_angle": self.total_proj_target_cos_angle / self.total_samples
+        }
+        return stats
 
 if __name__ == "__main__":
     loss_fn = LossFunction(1)

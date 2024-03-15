@@ -1,8 +1,22 @@
-
+def seed_everything(seed: int = 42):
+    import random
+    import os
+    import torch
+    import numpy as np
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 if __name__ == '__main__':
     from omegaconf import OmegaConf
     from dataset.data_module import GrambowDataModule
+    import os
+    import pathlib
 
     # Test data load
     config = OmegaConf.load('configs/config.yaml')
@@ -18,6 +32,7 @@ if __name__ == '__main__':
     from pytorch_lightning import Trainer
     from pytorch_lightning.callbacks import ModelCheckpoint
     torch.set_default_dtype(torch.float32)
+    seed_everything(config.train.seed)
     use_gpu = config.general.gpus > 0 and torch.cuda.is_available()
     devices = config.general.gpus if use_gpu else 1
     strategy = config.general.strategy
@@ -54,11 +69,6 @@ if __name__ == '__main__':
         log_every_n_steps=50 if name != 'debug' else 1,
         logger=[]
     )
-    print(trainer.strategy)
-    print(trainer.strategy.root_device)
-
-    import os
-    import pathlib
 
     if not config.general.test_only:
         trainer.fit(model, datamodule=datamodule, ckpt_path=config.general.resume)

@@ -9,37 +9,37 @@ from model.layers import MultiLayerPerceptron, assemble_atom_pair_feature
 from model.utils import load_edge_encoder, load_encoder, get_distance
 
 
-def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
-    def sigmoid(x):
-        return 1 / (np.exp(-x) + 1)
-
-    if beta_schedule == "quad":
-        betas = (
-            np.linspace(
-                beta_start**0.5,
-                beta_end**0.5,
-                num_diffusion_timesteps,
-                dtype=np.float64,
-            )
-            ** 2
-        )
-    elif beta_schedule == "linear":
-        betas = np.linspace(
-            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
-        )
-    elif beta_schedule == "const":
-        betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
-    elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
-        betas = 1.0 / np.linspace(
-            num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
-        )
-    elif beta_schedule == "sigmoid":
-        betas = np.linspace(-6, 6, num_diffusion_timesteps)
-        betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
-    else:
-        raise NotImplementedError(beta_schedule)
-    assert betas.shape == (num_diffusion_timesteps,)
-    return betas
+# def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
+#     def sigmoid(x):
+#         return 1 / (np.exp(-x) + 1)
+# 
+#     if beta_schedule == "quad":
+#         betas = (
+#             np.linspace(
+#                 beta_start**0.5,
+#                 beta_end**0.5,
+#                 num_diffusion_timesteps,
+#                 dtype=np.float64,
+#             )
+#             ** 2
+#         )
+#     elif beta_schedule == "linear":
+#         betas = np.linspace(
+#             beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+#         )
+#     elif beta_schedule == "const":
+#         betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
+#     elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
+#         betas = 1.0 / np.linspace(
+#             num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
+#         )
+#     elif beta_schedule == "sigmoid":
+#         betas = np.linspace(-6, 6, num_diffusion_timesteps)
+#         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
+#     else:
+#         raise NotImplementedError(beta_schedule)
+#     assert betas.shape == (num_diffusion_timesteps,)
+#     return betas
 
 
 class CondenseEncoderEpsNetwork(nn.Module):
@@ -73,18 +73,6 @@ class CondenseEncoderEpsNetwork(nn.Module):
             [self.edge_encoder, self.encoder, self.score_mlp]
         )
 
-        self.edge_cat = torch.nn.Sequential(
-            torch.nn.Linear(
-                self.edge_encoder.out_channels * 2,
-                self.edge_encoder.out_channels,
-            ),
-            load_activation(config.edge_cat_act),
-            torch.nn.Linear(
-                self.edge_encoder.out_channels,
-                self.edge_encoder.out_channels,
-            ),
-        )
-
     def condensed_edge_embedding(
         self,
         edge_length,
@@ -97,17 +85,17 @@ class CondenseEncoderEpsNetwork(nn.Module):
 
         assert emb_type in ["bond_w_d", "bond_wo_d", "add_d"]
         _enc = self.edge_encoder
-        _cat_fn = self.edge_cat
+        _cat_fn = self.edge_encoder.cat_fn
 
         if emb_type == "bond_wo_d":
             edge_attr_r = _enc.bond_emb(edge_type_r)
             edge_attr_p = _enc.bond_emb(edge_type_p)
-            edge_attr = _cat_fn(torch.cat([edge_attr_r, edge_attr_p], dim=-1))
+            edge_attr = _cat_fn(edge_attr_r, edge_attr_p)
 
         elif emb_type == "bond_w_d":
             edge_attr_r = _enc(edge_length, edge_length_T, edge_type_r)  # Embed edges
             edge_attr_p = _enc(edge_length, edge_length_T, edge_type_p)
-            edge_attr = _cat_fn(torch.cat([edge_attr_r, edge_attr_p], dim=-1))
+            edge_attr = _cat_fn(edge_attr_r, edge_attr_p)
 
         elif emb_type == "add_d":
             edge_attr = _enc.mlp(edge_length, edge_length_T) * edge_attr
@@ -122,6 +110,9 @@ class CondenseEncoderEpsNetwork(nn.Module):
             pos: structure of noisy structure (N, 3)
             pos_T: structure of initial structure (at time = 1) (N, 3)
         """
+        for p in self.named_parameters():
+            print(p)
+
         batch = rxn_graph.batch  # batch: batch index (N, )
         tt_node = tt.index_select(0, batch).unsqueeze(-1)  # Convert tt (G, ) to (N, 1)
 

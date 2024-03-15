@@ -56,6 +56,7 @@ class GrambowDataset(InMemoryDataset):
             transformed version. The data object will be transformed before
             being saved to disk. (default: :obj:`None`)
     """
+
     def __init__(
             self,
             root,
@@ -94,7 +95,9 @@ class GrambowDataset(InMemoryDataset):
         elif self.file_idx == 1:
             index = total_index[int(num_data * 0.8):int(num_data * 0.9)]
         else:
-            index = total_index[int(num_data * 0.9):]
+            # index = total_index[int(num_data * 0.9):]
+        # index = total_index[int(num_data * 0.98):]
+            index = total_index[-1:]
         return index
 
     def process(self):
@@ -178,7 +181,8 @@ class GrambowDataModule(AbstractDataModule):
         print(f"\n\troot_path: {root_path}")
 
         datasets = {
-            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="train"),
+            # "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="train"),
+            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="test"),
             "val": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="valid"),
             "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="test")
         }
