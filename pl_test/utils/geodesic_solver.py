@@ -7,6 +7,8 @@ from torch import vmap
 
 from time import time
 
+
+# NOTE: For debugging, will be deprecated
 def timer(func):
     """Check time.
 
@@ -25,6 +27,7 @@ def timer(func):
         return result
 
     return wrapper
+
 
 def redefine_edge_index(edges, batch, num_nodes):
     """
@@ -296,7 +299,33 @@ class GeodesicSolver(object):
         jacobian = torch.sparse_coo_tensor(index, val, (E, 3 * N))
         return jacobian
 
-    def sparse_batch_jacobian_q(self, index_tensor, atom_type, pos):
+    def sparse_batch_jacobian_d(self, index_tensor, pos, **kwargs):
+        assert pos.dim() == 3
+        B, n = pos.size(0), pos.size(1)
+        e = n * (n - 1) // 2
+
+        _b = index_tensor[0]
+        _i = index_tensor[2] + n * _b
+        _j = index_tensor[3] + n * _b
+        _pos = pos.reshape(-1, 3)  # (B * n, 3)
+        _edge_index = torch.stack([_i, _j])
+
+        d_ij = self.compute_d(_edge_index, _pos)  # (E, )
+
+        dd_dx = (_pos[_i] - _pos[_j]) / d_ij[:, None]  # (E, 3)
+        index = index_tensor[:2]  # (2, E)
+        index = torch.repeat_interleave(index, 3, dim=1)  # (2, 3E)
+
+        _i = _stack(index_tensor[2])  # (3E, )
+        _j = _stack(index_tensor[3])  # (3E, )
+
+        index = torch.cat([index.repeat(1, 2), torch.cat([_i, _j]).unsqueeze(0)], dim=0)
+        val = torch.cat([dd_dx, -dd_dx], dim=0).flatten()
+
+        jacobian = torch.sparse_coo_tensor(index, val, (B, e, 3 * n))
+        return jacobian
+
+    def sparse_batch_jacobian_q(self, index_tensor, pos, atom_type=None):
         """
         Args:
             index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
@@ -332,21 +361,43 @@ class GeodesicSolver(object):
         _i = _stack(index_tensor[2])  # (3E, )
         _j = _stack(index_tensor[3])  # (3E, )
 
-        jacobian = torch.sparse_coo_tensor(
-            torch.cat([index, _i.unsqueeze(0)], dim=0),
-            dq_dx.flatten(),
-            (B, e, 3 * n),
-        )
-        jacobian += torch.sparse_coo_tensor(
-            torch.cat([index, _j.unsqueeze(0)], dim=0),
-            -dq_dx.flatten(),
-            (B, e, 3 * n),
-        )
-        # TODO
-        # jacobian = jacobian.to_dense()
+        index = torch.cat([index.repeat(1, 2), torch.cat([_i, _j]).unsqueeze(0)], dim=0)
+        val = torch.cat([dq_dx, -dq_dx], dim=0).flatten()
+
+        jacobian = torch.sparse_coo_tensor(index, val, (B, e, 3 * n))
         return jacobian
 
-    def sparse_batch_hessian_q(self, index_tensor, atom_type, pos):
+    def sparse_batch_hessian_d(self, index_tensor, pos, **kwargs):
+        B, n = pos.size(0), pos.size(1)
+        e = n * (n - 1) // 2
+        _b = index_tensor[0]
+        _i = index_tensor[2] + n * _b
+        _j = index_tensor[3] + n * _b
+        _pos = pos.reshape(-1, 3)
+        _edge_index = torch.stack([_i, _j])
+
+        d_ij = self.compute_d(_edge_index, _pos)
+        d_pos = (_pos[_i] - _pos[_j])
+        hess_d_ij = d_pos.reshape(-1, 1, 3) * d_pos.reshape(-1, 3, 1) / (d_ij.reshape(-1, 1, 1) ** 3)
+        eye = torch.eye(3).reshape(1, 3, 3).to(d_ij.device)
+        hess_d_ij -= eye / d_ij.reshape(-1, 1, 1)
+
+        b_e_index = index_tensor[:2]
+        b_e_index = torch.repeat_interleave(b_e_index, 9, dim=1)
+        index_1, index_2 = b_e_index
+        col_i, row_i = _stack(_repeat(index_tensor[2], 3)), _repeat(_stack(index_tensor[2]), 3)
+        col_j, row_j = _stack(_repeat(index_tensor[3], 3)), _repeat(_stack(index_tensor[3]), 3)
+
+        index = torch.stack([
+            index_1.repeat(4),
+            torch.cat([row_i, row_j, row_i, row_j]) * 3 * n + torch.cat([col_i, col_j, col_j, col_i]),
+            index_2.repeat(4)
+        ])
+        val = torch.cat([-hess_d_ij, -hess_d_ij, hess_d_ij, hess_d_ij], dim=0).flatten()
+        hess = torch.sparse_coo_tensor(index, val, (B, 9 * n ** 2, e))
+        return hess
+
+    def sparse_batch_hessian_q(self, index_tensor, pos, atom_type=None):
         """
         Args:
             index_tensor (torch.LongTensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
@@ -415,137 +466,6 @@ class GeodesicSolver(object):
         dq = jacob @ dx.flatten()
         return dq
 
-    def advance(self, x, x_dot, edge_index, atom_type,
-                q_type="morse", dt=1e-2, verbose=False
-                ):
-        if q_type == "morse":
-            hess = self.hessian_q(edge_index, atom_type, x)  # (E, 3N, 3N)
-            jacob = self.jacobian_q(edge_index, atom_type, x)  # (E, 3N)
-        elif q_type == "DM":
-            hess = self.hessian_d(edge_index, x)
-            jacob = self.jacobian_d(edge_index, x)
-
-        J = jacob
-        JG = torch.linalg.pinv(J, rtol=1e-4, atol=self.svd_tol).T
-
-        christoffel = torch.einsum("mij, mk->kij", hess, JG)
-        x_ddot = - torch.einsum("j,kij,i->k", x_dot, christoffel, x_dot)
-
-        new_x = x + x_dot * dt
-        new_x_dot = x_dot + x_ddot * dt
-
-        # dotproduct
-        if verbose:
-            print(f"\t\tdebug: x_dot size = {x_dot.norm():0.8f}, x_ddot size = {x_ddot.norm():0.8f}")
-            print(f"\t\tdebug: dx norm = {(new_x - x).norm():0.8f}, dx_dot norm = {(new_x_dot - x_dot).norm():0.8f}")
-        return new_x, new_x_dot
-
-    def initialize(self, x, q_dot, edge_index, atom_type, q_type="morse"):
-        if q_type == "morse":
-            jacob = self.jacobian_q(edge_index, atom_type, x)
-        elif q_type == "DM":
-            jacob = self.jacobian_d(edge_index, x)
-
-        J = jacob
-        J_inv = torch.linalg.pinv(J, rtol=1e-4, atol=self.svd_tol)
-        x_dot = J_inv @ q_dot
-        q_dot = J @ x_dot
-
-        x = x.flatten()
-
-        total_time = x_dot.norm()
-        x_dot = x_dot / x_dot.norm()
-
-        if q_type == "morse":
-            q = self.compute_q(edge_index, atom_type, x.reshape(-1, 3))
-        elif q_type == "DM":
-            q = self.compute_d(edge_index, x.reshape(-1, 3))
-        else:
-            raise NotImplementedError
-
-        return x, x_dot, total_time, q, q_dot
-
-    def pos_adjust(self, x, J, num_nodes, scaler=0.05, thresh=1e-3):
-        """
-        Adjust position tensor so that singular values less than threshold becomes larger than threshold.
-        By pushing the position along the singular vectors corresponding to the small (but non-zero) singular values,
-        we can adjust position with minimal change in q-coordinates.
-        Args:
-            x (torch.Tensor): position tensor (B, n, 3)
-            J (torch.Tensor): jacobian tensor (B, e, 3n)
-            num_nodes (torch.Tensor): number of nodes for each graph (B, )
-        """
-        U, S, Vh = batch_svd1(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
-        mask = S < thresh  # select small (but nonzero) singular values
-        len_mask = sequence_length_mask(3 * num_nodes - 6, max_N=S.size(1))
-        mask = torch.logical_and(mask, len_mask)
-
-        coeff = torch.randn(mask.size()).to(x.device)  # coefficient for singular vectors for adjustment
-        coeff = coeff.masked_fill(~mask, 0)  # only selected singular vectors
-        coeff = coeff / ((coeff.pow(2).sum(-1, keepdim=True)).sqrt() + 1e-10) * scaler  # normalize and scale
-
-        if coeff.size(1) != Vh.size(1):
-            _ = torch.zeros(coeff.size(0), Vh.size(1)).to(coeff.device)
-            _[:, :coeff.size(1)] = coeff
-            coeff = _
-        pos_adjust = (coeff.unsqueeze(-1) * Vh).sum(1).reshape(len(num_nodes), -1, 3)  # (B, n, 3)
-        flag = mask.any()
-        x += pos_adjust
-
-        return x, flag
-
-    def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
-                         pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, verbose=0):
-        """
-        Args:
-            x (torch.Tensor): initial position tensor (B, n, 3)
-            q_dot (torch.Tensor): initial velocity tensor (B, e)
-            index_tensor (torch.Tensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
-            atom_type (torch.Tensor): atom type tensor (B, n)
-
-        """
-        # TODO: adjust position with singular values
-        assert q_type == "morse"
-
-        B = batch.max() + 1
-        n = num_nodes.max()
-        e = n * (n - 1) // 2
-
-        index_tensor = redefine_edge_index(edge_index, batch, num_nodes)  # (4, E)
-        x = redefine_with_pad(x, batch)  # (B, n, 3)
-        atom_type = redefine_with_pad(atom_type, batch, padding_value=-1)  # (B, n)
-        q_dot = torch.sparse_coo_tensor(
-            index_tensor[:2],
-            q_dot.flatten(),
-            (B, e),
-        ).to_dense()  # (B, e)
-
-        J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
-        x, flag = self.pos_adjust(x, J, num_nodes, scaler=pos_adjust_scaler, thresh=pos_adjust_thresh)
-        if flag:
-            # recompute jacobian
-            if verbose >= 1:
-                print("Adjusting positions because of numerical unstability...")
-            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()  # (B, e, 3n)
-
-        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
-
-        x_dot = torch.bmm(J_inv, q_dot.unsqueeze(-1)).reshape(B, n, 3)  # (B, n, 3)
-        q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
-
-        total_time = x_dot.reshape(B, -1).norm(dim=-1)
-        x_dot = x_dot / total_time.reshape(-1, 1, 1)  # (B, n, 3)
-        q_dot = q_dot / total_time.reshape(-1, 1)  # (B, e)
-
-        if q_type == "morse":
-            q = self.batch_compute_q(index_tensor, atom_type, x)
-        elif q_type == "DM":
-            q = self.batch_compute_d(index_tensor, x)
-        else:
-            raise NotImplementedError
-
-        return x, x_dot, total_time, q, q_dot, atom_type, index_tensor
-
     def batch_compute_q(self, index_tensor, atom_type, x):
         B = index_tensor[0].max() + 1
         n = index_tensor[2:].max() + 1
@@ -559,12 +479,7 @@ class GeodesicSolver(object):
 
         edge_index = torch.stack([i, j])  # (2, E)
         q_value = self.compute_q(edge_index, atom_type, x)
-
-        q = torch.sparse_coo_tensor(
-            index_tensor[:2],
-            q_value,
-            (B, e),
-        ).to_dense()
+        q = torch.sparse_coo_tensor(index_tensor[:2], q_value, (B, e),).to_dense()
         return q
 
     def batch_compute_d(self, index_tensor, x):
@@ -579,12 +494,7 @@ class GeodesicSolver(object):
 
         edge_index = torch.stack([i, j])  # (2, E)
         d_value = self.compute_d(edge_index, x)
-
-        d = torch.sparse_coo_tensor(
-            index_tensor[:2],
-            d_value,
-            (B, e),
-        ).to_dense()
+        d = torch.sparse_coo_tensor(index_tensor[:2], d_value, (B, e),).to_dense()
         return d
 
     def batch_compute_de(self, index_tensor, atom_type):
@@ -596,7 +506,8 @@ class GeodesicSolver(object):
         i, j = i + batch_index * n, j + batch_index * n
 
         edge_index = torch.stack([i, j])  # (2, E)
-        return self.compute_de(edge_index, atom_type)
+        de = self.compute_de(edge_index, atom_type)
+        return de
 
     def batch_geodesic_ode_solve(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
                                  num_iter=10, ref_dt=1e-2, max_dt=1e-1, min_dt=1e-3, verbose=0, max_iter=1000, err_thresh=0.05,
@@ -684,7 +595,7 @@ class GeodesicSolver(object):
 
                     if verbose >= 0:
                         print(f"[Warning] Some samples ({new_ban}) are banned due to numerical unstability.")
-                        print(f"[Warning] veolocity error is too large, restart with smaller time step.")
+                        print("[Warning] veolocity error is too large, restart with smaller time step.")
                         print(f"err = {err[err > err_thresh]}")
 
                 update_index = not_done_index[err <= err_thresh]
@@ -711,16 +622,98 @@ class GeodesicSolver(object):
 
         if q_type == "morse":
             q_last = self.batch_compute_q(index_tensor, atom_type, x)
+            J = self.sparse_batch_jacobian_q(index_tensor, x, atom_type=atom_type).to_dense()
         elif q_type == "DM":
             q_last = self.batch_compute_d(index_tensor, x)
+            J = self.sparse_batch_jacobian_d(index_tensor, x, atom_type=atom_type).to_dense()
 
-        J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x).to_dense()
         x_dot *= total_time.reshape(-1, 1, 1)
         q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
         last = {"x": x, "x_dot": x_dot, "q": q_last, "q_dot": q_dot}
         stats = {"iter": iter, "current_time": current_time, "total_time": total_time, "ban_index": ban_index}
 
         return init, last, iter, index_tensor, stats
+
+    def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
+                         pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, verbose=0):
+        """
+        Args:
+            x (torch.Tensor): initial position tensor (B, n, 3)
+            q_dot (torch.Tensor): initial velocity tensor (B, e)
+            index_tensor (torch.Tensor): redefined edge tensor - (batch_idx, edge_idx, i', j'), shape: (4, E)
+            atom_type (torch.Tensor): atom type tensor (B, n)
+
+        """
+        if q_type == "morse":
+            calc_jacob = self.sparse_batch_jacobian_q
+        elif q_type == "DM":
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        B = batch.max() + 1
+        n = num_nodes.max()
+        e = n * (n - 1) // 2
+
+        index_tensor = redefine_edge_index(edge_index, batch, num_nodes)  # (4, E)
+        x = redefine_with_pad(x, batch)  # (B, n, 3)
+        atom_type = redefine_with_pad(atom_type, batch, padding_value=-1)  # (B, n)
+        q_dot = torch.sparse_coo_tensor(index_tensor[:2], q_dot.flatten(), (B, e),).to_dense()  # (B, e)
+
+        J = calc_jacob(index_tensor, x, atom_type=atom_type).to_dense()  # (B, e, 3n)
+        x, flag = self.pos_adjust(x, J, num_nodes, scaler=pos_adjust_scaler, thresh=pos_adjust_thresh)
+        if flag:
+            # recompute jacobian
+            if verbose >= 1:
+                print("Adjusting positions because of numerical unstability...")
+            J = calc_jacob(index_tensor, x, atom_type=atom_type).to_dense()  # (B, e, 3n)
+
+        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
+
+        x_dot = torch.bmm(J_inv, q_dot.unsqueeze(-1)).reshape(B, n, 3)  # (B, n, 3)
+        q_dot = torch.bmm(J, x_dot.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
+
+        total_time = x_dot.reshape(B, -1).norm(dim=-1)
+        x_dot = x_dot / total_time.reshape(-1, 1, 1)  # (B, n, 3)
+        q_dot = q_dot / total_time.reshape(-1, 1)  # (B, e)
+
+        if q_type == "morse":
+            q = self.batch_compute_q(index_tensor, atom_type, x)
+        elif q_type == "DM":
+            q = self.batch_compute_d(index_tensor, x)
+        else:
+            raise NotImplementedError
+
+        return x, x_dot, total_time, q, q_dot, atom_type, index_tensor
+
+    def pos_adjust(self, x, J, num_nodes, scaler=0.05, thresh=1e-3):
+        """
+        Adjust position tensor so that singular values less than threshold becomes larger than threshold.
+        By pushing the position along the singular vectors corresponding to the small (but non-zero) singular values,
+        we can adjust position with minimal change in q-coordinates.
+        Args:
+            x (torch.Tensor): position tensor (B, n, 3)
+            J (torch.Tensor): jacobian tensor (B, e, 3n)
+            num_nodes (torch.Tensor): number of nodes for each graph (B, )
+        """
+        U, S, Vh = batch_svd1(J)  # S : (B, e), U : (B, e, e), Vh : (B, 3n, 3n)
+        mask = S < thresh  # select small (but nonzero) singular values
+        len_mask = sequence_length_mask(3 * num_nodes - 6, max_N=S.size(1))
+        mask = torch.logical_and(mask, len_mask)
+
+        coeff = torch.randn(mask.size()).to(x.device)  # coefficient for singular vectors for adjustment
+        coeff = coeff.masked_fill(~mask, 0)  # only selected singular vectors
+        coeff = coeff / ((coeff.pow(2).sum(-1, keepdim=True)).sqrt() + 1e-10) * scaler  # normalize and scale
+
+        if coeff.size(1) != Vh.size(1):
+            _ = torch.zeros(coeff.size(0), Vh.size(1)).to(coeff.device)
+            _[:, :coeff.size(1)] = coeff
+            coeff = _
+        pos_adjust = (coeff.unsqueeze(-1) * Vh).sum(1).reshape(len(num_nodes), -1, 3)  # (B, n, 3)
+        flag = mask.any()
+        x += pos_adjust
+
+        return x, flag
 
     def batch_advance(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False, method="Euler"):
         if method == "Euler":
@@ -746,26 +739,32 @@ class GeodesicSolver(object):
             dt: torch.Tensor, time step tensor (B, )
         """
 
-        dt = dt[~done]
         if q_type == "morse":
-            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)  # (B, e, 3n)
+            calc_jacob = self.sparse_batch_jacobian_q
         elif q_type == "DM":
-            J = self.sparse_batch_jacobian_d(index_tensor, x)
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        dt = dt[~done].clone().detach()
+        J = calc_jacob(index_tensor, x, atom_type=atom_type)
 
         B = (~done).sum()
-        not_done_index = torch.where(~done)[0]  # sparse
+        not_done_index = torch.where(~done)[0]
         J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
-        J = J.to_dense()
 
         if return_qdot:
-            q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
+            q_dot = torch.bmm(J.to_dense(), x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
         else:
             q_dot = None
 
-        _dt = torch.where(dt > 0, dt, torch.zeros_like(dt))
+        _dt = dt.clip(min=0)
+
         dx, dx_dot = self._advance(done, x, x_dot, index_tensor, atom_type, _dt, q_type=q_type, J=J)
+
         x[~done] += dx
         x_dot[~done] += dx_dot
+
         if verbose:
             print(f"\t\tdebug: dx = {dx.reshape(B, -1).norm(dim=-1)}, dx_dot norm = {dx_dot.reshape(B, -1).norm(dim=-1)}")
 
@@ -781,23 +780,28 @@ class GeodesicSolver(object):
             done: torch.BoolTensor, already finishied flag tensor (B, )
             dt: torch.Tensor, time step tensor (B, )
         """
-        dt = dt[~done].clone().detach()
+
         if q_type == "morse":
-            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+            calc_jacob = self.sparse_batch_jacobian_q
         elif q_type == "DM":
-            J = self.sparse_batch_jacobian_d(index_tensor, x)
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        dt = dt[~done].clone().detach()
+        J = calc_jacob(index_tensor, x, atom_type=atom_type)
 
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
         J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
-        J = J.to_dense()
 
         if return_qdot:
-            q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
+            q_dot = torch.bmm(J.to_dense(), x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
         else:
             q_dot = None
 
         _dt = dt.clip(min=0)
+
         x_new, x_dot_new = x.clone(), x_dot.clone()
 
         dx1, dx_dot1 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type, J=J)
@@ -805,17 +809,16 @@ class GeodesicSolver(object):
         x_dot_new[~done] = x_dot[~done] + dx_dot1
 
         dx2, dx_dot2 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
-
         update_x = (dx1 + dx2) / 2
         update_x_dot = (dx_dot1 + dx_dot2) / 2
 
         x[~done] += update_x
         x_dot[~done] += update_x_dot
+
         if verbose:
             print(f"\t\tdebug: dx = {update_x.reshape(B, -1).norm(dim=-1)}, dx_dot norm = {update_x_dot.reshape(B, -1).norm(dim=-1)}")
 
         return x, x_dot, q_dot
-
 
     def batch_advance_rk4(self, x, x_dot, index_tensor, atom_type, done, dt, q_type="morse", verbose=False, return_qdot=False):
         """
@@ -827,23 +830,28 @@ class GeodesicSolver(object):
             done: torch.BoolTensor, already finishied flag tensor (B, )
             dt: torch.Tensor, time step tensor (B, )
         """
-        dt = dt[~done]
+
         if q_type == "morse":
-            J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+            calc_jacob = self.sparse_batch_jacobian_q
         elif q_type == "DM":
-            J = self.sparse_batch_jacobian_d(index_tensor, x)
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        dt = dt[~done].clone().detach()
+        J = calc_jacob(index_tensor, x, atom_type=atom_type)
 
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
-        J = J.index_select(0, not_done_index)
-        J = J.to_dense()
+        J = J.index_select(0, not_done_index)  # sparse (B, e, 3n)
 
         if return_qdot:
-            q_dot = torch.bmm(J, x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
+            q_dot = torch.bmm(J.to_dense(), x_dot[~done].reshape(B, -1, 1)).squeeze(-1)
         else:
             q_dot = None
 
-        _dt = torch.where(dt > 0, dt, torch.zeros_like(dt))
+        _dt = dt.clip(min=0)
+
         x_new, x_dot_new = x.clone(), x_dot.clone()
         dx1, dx_dot1 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type, J=J)
         x_new[~done] = x_new[~done] + dx1 * 0.5
@@ -862,6 +870,7 @@ class GeodesicSolver(object):
         dx4, dx_dot4 = self._advance(done, x_new, x_dot_new, index_tensor, atom_type, _dt, q_type=q_type)
         update_x = (dx1 + 2 * dx2 + 2 * dx3 + dx4) / 6
         update_x_dot = (dx_dot1 + 2 * dx_dot2 + 2 * dx_dot3 + dx_dot4) / 6
+
         x[~done] += update_x
         x_dot[~done] += update_x_dot
 
@@ -873,16 +882,18 @@ class GeodesicSolver(object):
     def _advance(self, done, x, x_dot, index_tensor, atom_type, dt, q_type="morse", J=None):
         B = (~done).sum()
         not_done_index = torch.where(~done)[0]
-        if J is None:
+
+        if J is None:  # compute J
             if q_type == "morse":
-                J = self.sparse_batch_jacobian_q(index_tensor, atom_type, x)
+                J = self.sparse_batch_jacobian_q(index_tensor, x, atom_type=atom_type)
                 J = J.index_select(0, not_done_index)
             elif q_type == "DM":
-                J = self.sparse_batch_jacobian_d(index_tensor, x)
+                J = self.sparse_batch_jacobian_d(index_tensor, x, atom_type=atom_type)
                 J = J.index_select(0, not_done_index)
             else:
                 raise NotImplementedError
-        christoffel = self.batch_christoffel(index_tensor, atom_type, x, J, not_done_index)  # (B, n, n, n)
+
+        christoffel = self.batch_christoffel(index_tensor, atom_type, x, J, not_done_index, q_type=q_type)  # (B, n, n, n)
         x_ddot = - torch.einsum("bj,bkij,bi->bk", x_dot[~done].reshape(B, -1), christoffel, x_dot[~done].reshape(B, -1))
         x_ddot = x_ddot.reshape(B, -1, 3)
 
@@ -890,10 +901,17 @@ class GeodesicSolver(object):
         dx_dot = x_ddot * dt.reshape(-1, 1, 1)
         return dx, dx_dot
 
-    def batch_christoffel(self, index_tensor, atom_type, x, J, not_done_index):
+    def batch_christoffel(self, index_tensor, atom_type, x, J, not_done_index, q_type="morse"):
         n3 = x.size(1) * 3
         B = not_done_index.numel()
-        hess = self.sparse_batch_hessian_q(index_tensor, atom_type, x)  # sparse (B, 3n * 3n, e)
+
+        if q_type == "morse":
+            hess = self.sparse_batch_hessian_q(index_tensor, x, atom_type=atom_type)  # sparse (B, 3n * 3n, e)
+        elif q_type == "DM":
+            hess = self.sparse_batch_hessian_d(index_tensor, x, atom_type=atom_type)  # sparse (B, 3n * 3n, e)
+        else:
+            raise NotImplementedError
+
         hess = hess.index_select(0, not_done_index)  # sparse (B, 3n * 3n, e)
         J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol).transpose(-1, -2)  # dense (B, e, 3n)
 
@@ -923,5 +941,4 @@ def batch_svd2(J):
 
 
 if __name__ == "__main__":
-    import omegaconf
-    config = omegaconf.OmegaConf.load("../configs/config.yaml")
+    pass

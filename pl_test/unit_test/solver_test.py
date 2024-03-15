@@ -3,8 +3,8 @@ import sys
 sys.path.append("../")
 import tqdm
 from diffusion.noise_scheduler import load_noise_scheduler
-from utils.geodesic_solver_debug import TestSolver, redefine_edge_index, redefine_with_pad
 from utils.geodesic_solver import GeodesicSolver
+from utils.geodesic_solver_backup import GeodesicSolver as GeodesicSolver_backup
 from dataset.data_module import GrambowDataModule
 
 from torch_geometric.data import Batch
@@ -47,7 +47,7 @@ def noise_level_sampling(data, noise_schedule=""):
     return index, t, sampled_SNR_ratio
 
 
-def round_trip_init(data, config="", noise_schedule="", geodesic_solver="", verbose=0, seed=0, dtype=torch.float32):
+def round_trip_init(data, config="", noise_schedule="", geodesic_solver="", verbose=0, seed=0, dtype=torch.float32, q_type="morse"):
     fix_seed(seed)
     graph = RxnGraph.from_batch(data)
     full_edge, _, _ = graph.full_edge(upper_triangle=True)
@@ -60,23 +60,17 @@ def round_trip_init(data, config="", noise_schedule="", geodesic_solver="", verb
     t_index, tt, SNR_ratio = noise_level_sampling(data, noise_schedule=noise_schedule)  # (G, ), (G, ), (G, )
 
     t_index_node = t_index.index_select(0, node2graph)  # (N, )
-    mean = data.pos[(torch.arange(len(t_index_node)), t_index_node)]  # (N, 3)
-    pos_init = data.pos[:, -1]
+    mean = data.pos[(torch.arange(len(t_index_node)), t_index_node)].to(dtype)  # (N, 3)
+    pos_init = data.pos[:, -1].to(dtype)
 
-    mean = mean.to(dtype)
-    pos_init = pos_init.to(dtype)
-
-    sigma_hat = noise_schedule.get_sigma_hat(tt)  # (G, )
-    sigma_hat = sigma_hat.to(dtype)
-
+    sigma_hat = noise_schedule.get_sigma_hat(tt).to(dtype)  # (G, )
     sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (E, )
-    sigma_hat_edge = sigma_hat_edge.to(dtype)
     noise = torch.randn(size=(full_edge.size(1),), device=full_edge.device) * sigma_hat_edge  # dq, (E, )
     noise = noise.to(dtype) * 100
     return mean, noise, full_edge, graph.atom_type, node2graph, num_nodes
 
 
-def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver="", verbose=0, dtype=torch.float32):
+def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver="", verbose=0, dtype=torch.float32, q_type="morse"):
     init, last, iter, index_tensor, stats = solver.batch_geodesic_ode_solve(
         pos,
         q_dot,
@@ -94,6 +88,7 @@ def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver=
         method="Heun",
         pos_adjust_scaler=config.manifold.ode_solver.pos_adjust_scaler,
         pos_adjust_thresh=config.manifold.ode_solver.pos_adjust_thresh,
+        q_type=q_type,
     )
 
     batch_x_out = last["x"]
@@ -137,6 +132,7 @@ def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver=
             method="RK4",
             pos_adjust_scaler=config.manifold.ode_solver.pos_adjust_scaler,
             pos_adjust_thresh=config.manifold.ode_solver.pos_adjust_thresh,
+            q_type=q_type,
         )
 
         _batch_x_out = _last["x"]
@@ -166,7 +162,7 @@ def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver=
             b = len(retry_index)
             _ = _.reshape(b, -1)
             numel = _v.numel() // b
-            _[:, :numel]  += _v.reshape(b, -1)
+            _[:, :numel] += _v.reshape(b, -1)
             _ = _.reshape(v[retry_index].shape)
             v[retry_index] = _
     else:
@@ -176,7 +172,7 @@ def solve(pos, q_dot, edge, atom_type, node2graph, num_nodes, config="", solver=
     return init, last, out, index_tensor, ban_index
 
 
-def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0, seed=0, dtype=torch.float32):
+def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0, seed=0, dtype=torch.float32, q_type="morse"):
 
     x, q_dot, edge, atom_type, node2graph, num_nodes = round_trip_init(
         data,
@@ -185,7 +181,8 @@ def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0
         geodesic_solver=geodesic_solver,
         verbose=verbose,
         seed=seed,
-        dtype=dtype
+        dtype=dtype,
+        q_type=q_type,
     )
     init, last, out, _, ban_index = solve(
         x,
@@ -197,7 +194,8 @@ def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0
         solver=geodesic_solver,
         config=config,
         verbose=verbose,
-        dtype=dtype
+        dtype=dtype,
+        q_type=q_type,
     )
 
     x_out = out["x"]
@@ -213,7 +211,8 @@ def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0
         solver=geodesic_solver,
         config=config,
         verbose=verbose,
-        dtype=dtype
+        dtype=dtype,
+        q_type=q_type,
     )
 
     B = data.num_graphs
@@ -250,6 +249,7 @@ def round_trip(data, config="", noise_schedule="", geodesic_solver="", verbose=0
     print(f"round_rmsd : \n{round_rmsd.abs()}")
     print(f"round_dmae : \n{round_dmae.abs()}\n\n")
 
+
 def DMAE(x, y):
     """x : (N, 3)"""
     mask = (x == 0).all(dim=-1)
@@ -271,7 +271,6 @@ def RMSD(x, y):
     N = x.size(0)
     rmsd = (x - y).pow(2).sum(dim=-1).mean().sqrt()
     return rmsd
-
 
 
 def apply_noise(data, config="", noise_schedule="", geodesic_solver="", verbose=0, seed=0, dtype=torch.float32):
@@ -425,28 +424,26 @@ if __name__ == "__main__":
     parser.add_argument("--solver", type=str, default="test")
     parser.add_argument("--verbose", type=int, default=0)
     parser.add_argument("--dtype", type=str, default="float")
+    parser.add_argument("--q_type", type=str, default="morse", choices=["morse", "DM"])
     parser.add_argument("--test_type", type=str, choices=["round_trip", "apply_noise"], default="round_trip")
     args = parser.parse_args()
 
-    torch.set_printoptions(precision=10, sci_mode=True, edgeitems=10, threshold=1000, profile="full")
+    torch.set_printoptions(precision=5, sci_mode=False, edgeitems=10, threshold=1000, profile="full")
     dtype = torch.float32 if args.dtype == "float" else torch.float64
     torch.set_num_threads(4)
 
     config = omegaconf.OmegaConf.load('configs/config.yaml')
     datamodule = GrambowDataModule(config)
-    if args.solver == "test":
-        solver = TestSolver(config.manifold)
-    else:
-        solver = GeodesicSolver(config.manifold)
+    solver = GeodesicSolver(config.manifold)
     noise_schedule = load_noise_scheduler(config.diffusion)
 
     if args.test_type == "apply_noise":
         for i, batch in tqdm.tqdm(enumerate(datamodule.test_dataloader())):
             batch = batch.to(args.device)
-            graph, pos_noise, pos_init, tt, target_x, target_q = apply_noise(batch, config=config, noise_schedule=noise_schedule, geodesic_solver=solver, verbose=args.verbose, dtype=dtype)
+            graph, pos_noise, pos_init, tt, target_x, target_q = apply_noise(batch, config=config, noise_schedule=noise_schedule, geodesic_solver=solver, verbose=args.verbose, dtype=dtype, q_type=args.q_type)
 
     if args.test_type == "round_trip":
         for i, batch in tqdm.tqdm(enumerate(datamodule.test_dataloader())):
             batch = batch.to(args.device)
-            round_trip(batch, config=config, noise_schedule=noise_schedule, geodesic_solver=solver, verbose=args.verbose, dtype=dtype)
+            round_trip(batch, config=config, noise_schedule=noise_schedule, geodesic_solver=solver, verbose=args.verbose, dtype=dtype, q_type=args.q_type)
             break
