@@ -9,6 +9,8 @@ from torch import nn, Tensor
 from torch_geometric.nn.conv import MessagePassing
 from torch_scatter import scatter, scatter_mean
 
+import sys
+sys.path.append("/home/jhwoo/programs/OAReactDiff")
 from oa_reactdiff.model.util_funcs import unsorted_segment_sum
 from oa_reactdiff.model.core import MLP
 
@@ -74,14 +76,14 @@ class NeighborEmb(MessagePassing):
 
     def __init__(self, hid_dim, in_hidden_channels=5):
         super(NeighborEmb, self).__init__(aggr="add")
-        self.embedding = nn.Linear(in_hidden_channels, hid_dim)
         self.hid_dim = hid_dim
-        self.ln_emb = nn.LayerNorm(hid_dim, elementwise_affine=False)
+        self.embedding = nn.Linear(in_hidden_channels, self.hid_dim)
+        self.ln_emb = nn.LayerNorm(self.hid_dim, elementwise_affine=False)
+        return
 
     def forward(self, z, s, edge_index, embs):
         s_neighbors = self.ln_emb(self.embedding(z))
         s_neighbors = self.propagate(edge_index, x=s_neighbors, norm=embs)
-
         s = s + s_neighbors
         return s
 
@@ -630,9 +632,12 @@ class LEFTNet(torch.nn.Module):
         self.s2v = CFConvS2V(hidden_channels)
 
         self.radial_lin = nn.Sequential(
-            nn.Linear(num_radial, hidden_channels),
+            # nn.Linear(num_radial, hidden_channels),
+            # nn.SiLU(inplace=True),
+            # nn.Linear(hidden_channels, hidden_channels),
+            nn.Linear(num_radial, hidden_channels // 2),
             nn.SiLU(inplace=True),
-            nn.Linear(hidden_channels, hidden_channels),
+            nn.Linear(hidden_channels // 2, hidden_channels // 2),
         )
 
         self.lin3 = nn.Sequential(
@@ -663,7 +668,6 @@ class LEFTNet(torch.nn.Module):
 
         self.gcl_layers = nn.ModuleList()
         self.message_layers = nn.ModuleList()
-        self.update_layers = nn.ModuleList()
 
         for _ in range(num_layers):
             self.gcl_layers.append(
@@ -672,9 +676,17 @@ class LEFTNet(torch.nn.Module):
             self.message_layers.append(
                 EquiMessage(hidden_channels, num_radial, reflect_equiv).jittable()
             )
-            self.update_layers.append(EquiUpdate(hidden_channels, reflect_equiv))
+            # self.update_layers.append(EquiUpdate(hidden_channels, reflect_equiv))
 
-        self.last_layer = nn.Linear(hidden_channels, 1)
+        # self.update_layers = nn.ModuleList()
+        if self.update:
+            self.update_layers = nn.ModuleList()
+            for _ in range(num_layers):
+                self.update_layers.append(EquiUpdate(hidden_channels, reflect_equiv))
+
+
+        # Deprecated by Jeheon
+        # self.last_layer = nn.Linear(hidden_channels, 1)
 
         self.inv_sqrt_2 = 1 / math.sqrt(2.0)
         self.out_pos = EquiOutput(
@@ -687,25 +699,25 @@ class LEFTNet(torch.nn.Module):
         self.vec = vector()
 
         self.reset_parameters()
+        return
 
     @classmethod
     def from_config(cls, config):
-        cfg = config.model.graph_encoder
         encoder = cls(
-            pos_require_grad=cfg.pos_require_grad,
-            cutoff=cfg.cutoff,
-            num_layers=cfg.num_layers,
-            hidden_channels=cfg.hidden_channels,
-            num_radial=cfg.num_radial,
-            in_hidden_channels=cfg.in_hidden_channels,
-            reflect_equiv=cfg.reflect_equiv,
-            legacy=cfg.legacy,
-            update=cfg.update,
-            pos_grad=cfg.pos_grad,
-            single_layer_output=cfg.single_layer_output,
-            for_conf=cfg.for_conf,
-            ff=cfg.ff,
-            object_aware=cfg.object_aware,
+            pos_require_grad=config.pos_require_grad,
+            cutoff=config.cutoff,
+            num_layers=config.num_layers,
+            hidden_channels=config.hidden_channels,
+            num_radial=config.num_radial,
+            in_hidden_channels=config.in_hidden_channels,
+            reflect_equiv=config.reflect_equiv,
+            legacy=config.legacy,
+            update=config.update,
+            pos_grad=config.pos_grad,
+            single_layer_output=config.single_layer_output,
+            for_conf=config.for_conf,
+            ff=config.ff,
+            object_aware=config.object_aware,
         )
         return encoder
 
@@ -823,8 +835,10 @@ class LEFTNet(torch.nn.Module):
 
         f = torch.cat((f, f_T), dim=-1)
         # f is distance embedding, shape: (n_edge, 196)
+        # (above is wrong. Fixed) f is distance embedding, shape: (n_edge, 2 * hidden_channels)
 
         # init node features
+        # z_emb = self.embedding(h)
         s = self.neighbor_emb(h, z_emb, edge_index, f)  # masked by all_edge_masks  # TODO remove "z_emb"
         # s is f (distance) based node embedding: (n_atom, 196)
         # both s and f is E(3) invariant
@@ -860,6 +874,9 @@ class LEFTNet(torch.nn.Module):
         ).squeeze(-1)
 
         # Added by Seonghwan (Add the graph connectivity information to the scalarization)
+        # TODO: scalar3, scalar4, edge_attr의 dimension mis-match 문제: 현재는, hidden_channels와 hidden_dim이 같을 때만 돌 수 있음.
+        ## scalar3, scalar4: [natoms, hidden_channels]   # [2914, 196]
+        ## edge_attr: [natoms, hidden_dim]    # [2914, 128]
         scalar3 = scalar3 * edge_attr
         scalar4 = scalar4 * edge_attr
 
@@ -874,10 +891,15 @@ class LEFTNet(torch.nn.Module):
 
         # bulid node-wise frame for node-update
         a = pos_frame
+        if self.legacy:
+            b = self.vec(pos_frame, edge_index)
+        else:
+            # Deprecated by Jeheon
+            raise NotImplementedError
 
         # Deprecated by Seonghwan
         # if self.legacy:
-        b = self.vec(pos_frame, edge_index)
+        # b = self.vec(pos_frame, edge_index)
         # else:
         #     # Added by Chenru: for new implementation of constructing node frame.
         #     eff_edge_ij = torch.where(all_edge_masks.squeeze(-1) == 1)[0]

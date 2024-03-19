@@ -1,4 +1,3 @@
-import wandb
 import torch
 import pytorch_lightning as pl
 import time
@@ -34,11 +33,11 @@ class BridgeDiffusion(pl.LightningModule):
         # config.general.name  +  dd-mm-yy:hh-mm-ss
         self.name = config.general.name + time.strftime(":%d-%m-%y:%H-%M-%S")
 
-        self.NeuralNet = CondenseEncoderEpsNetwork(config.model)
         if config.model.name == "equivariant":
-            epsnet = EquivariantEncoderEpsNetwork
-        elif config.model.name == "condense":
-            epsnet = CondenseEncoderEpsNetwork
+            self.NeuralNet = EquivariantEncoderEpsNetwork(config.model)
+        elif config.model.name == "condensed":
+            self.NeuralNet = CondenseEncoderEpsNetwork(config.model)
+
         self.noise_schedule = load_noise_scheduler(config.diffusion)
         self.rxn_graph = RxnGraph
         self.dynamic_rxn_graph = DynamicRxnGraph
@@ -59,6 +58,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         self.val_counter = 0
         self.test_counter = 0
+        return
 
     def forward(self, noisy_rxn_graph):
         return self.NeuralNet(noisy_rxn_graph).squeeze()

@@ -16,10 +16,16 @@ if __name__ == '__main__':
     from omegaconf import OmegaConf
     from dataset.data_module import GrambowDataModule
     import os
+    import sys
     import pathlib
 
     # Test data load
-    config = OmegaConf.load('configs/config.yaml')
+    # config = OmegaConf.load('configs/config.yaml')
+    if len(sys.argv) == 1:
+        config_file = "configs/config.yaml"
+    else:
+        config_file = sys.argv[-1]
+    config = OmegaConf.load(config_file)
     datamodule = GrambowDataModule(config)
     print(f"data load success: {datamodule}")
     print("-----------------------------------------------------")
