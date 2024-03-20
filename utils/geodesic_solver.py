@@ -341,3 +341,7 @@ class GeodesicSolver(object):
         # q_dot.norm() should be same as total_dq
 
         return x.reshape(-1, 3), iter, total_dq, q_dot.norm()
+
+
+if __name__ == "__main__":
+

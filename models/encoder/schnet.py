@@ -9,6 +9,7 @@ from math import pi as PI
 
 from utils.chem import BOND_TYPES
 from ..common import MeanReadout, SumReadout, MultiLayerPerceptron
+import math
 
 
 class GaussianSmearing(torch.nn.Module):
@@ -96,7 +97,7 @@ class CFConv(MessagePassing):
         else:
             C = (edge_length <= self.cutoff).float()
         W = self.nn(edge_attr) * C.view(-1, 1)
-        #W = self.nn(edge_attr)
+        # W = self.nn(edge_attr)
 
         x = self.lin1(x)
         x = self.propagate(edge_index, x=x, W=W)
@@ -108,23 +109,71 @@ class CFConv(MessagePassing):
 
 
 class InteractionBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, num_gaussians, num_filters, cutoff, smooth):
+    def __init__(self, hidden_channels, num_gaussians, num_filters, cutoff, smooth, temb_channels=128):
         super(InteractionBlock, self).__init__()
         mlp = Sequential(
             Linear(num_gaussians, num_filters),
             ShiftedSoftplus(),
             Linear(num_filters, num_filters),
         )
-        self.conv = CFConv(
+
+        self.temb_channels = temb_channels
+        self.conv1 = CFConv(
+            hidden_channels, hidden_channels, num_filters, mlp, cutoff, smooth
+        )
+        self.temb_proj = torch.nn.Linear(temb_channels, hidden_channels)
+        self.conv2 = CFConv(
             hidden_channels, hidden_channels, num_filters, mlp, cutoff, smooth
         )
         self.act = ShiftedSoftplus()
         self.lin = Linear(hidden_channels, hidden_channels)
 
-    def forward(self, x, edge_index, edge_length, edge_attr):
-        x = self.conv(x, edge_index, edge_length, edge_attr)
+    def get_timestep_embedding(self, t):
+        """
+        This matches the implementation in Denoising Diffusion Probabilistic Models:
+        From Fairseq.
+        Build sinusoidal embeddings.
+        This matches the implementation in tensor2tensor, but differs slightly
+        from the description in Section 3.5 of "Attention Is All You Need".
+        """
+        embedding_dim = self.temb_channels
+        assert len(t.shape) == 1
+        half_dim = embedding_dim // 2
+        emb = math.log(1000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
+        emb = emb.to(device=t.device)
+        emb = t.float()[:, None] * emb[None, :]
+        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
+        if embedding_dim % 2 == 1:  # zero pad
+            emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
+        return emb
+
+    def temb_nonlinearlity(self, x):
+        # swish
+        return x * torch.sigmoid(x)
+
+    def forward(self, t, x, edge_index, edge_length, edge_attr):
+        """Args :
+        x: (N, d)
+        t: (N, )
+        """
+        # conv 1 > time embedding
+        x = self.conv1(x, edge_index, edge_length, edge_attr)
+
+        # time embedding
+        t = self.get_timestep_embedding(t, self.temb_channels)
+        t = self.temb_nonlinearity(self.get_timestep_embedding(t))
+
+        x = x + self.temb_proj(t)
         x = self.act(x)
+
+        # conv 2
+        x = self.conv2(x, edge_index, edge_length, edge_attr)
+        x = self.act(x)
+
+        # lin > act
         x = self.lin(x)
+        x = self.act(x)
         return x
 
 
@@ -139,7 +188,8 @@ class SchNetEncoder(Module):
         smooth=False,
         embedding=False,
         edge_emb=None,
-        edge_activation="ReLU"
+        edge_activation="ReLU",
+        temb_channels=64
     ):
         super().__init__()
 
@@ -154,22 +204,23 @@ class SchNetEncoder(Module):
         if edge_emb is not None:
             self.edge_emb = edge_emb
             self.edge_cat = torch.nn.Sequential(
-                    torch.nn.Linear(hidden_channels *2, hidden_channels),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(hidden_channels, hidden_channels))
+                torch.nn.Linear(hidden_channels * 2, hidden_channels),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_channels, hidden_channels)
+            )
             self.edge_d_emb = MultiLayerPerceptron(
-                    1, 
-                    [hidden_channels, hidden_channels], 
-                    activation=edge_activation
-                    )
+                2,
+                [hidden_channels, hidden_channels],
+                activation=edge_activation
+            )
 
         self.interactions = ModuleList()
         for _ in range(num_interactions):
             block = InteractionBlock(
-                hidden_channels, edge_channels, num_filters, cutoff, smooth
+                hidden_channels, edge_channels, num_filters, cutoff, smooth, temb_channels=temb_channels
             )
             self.interactions.append(block)
-    
+
     @classmethod
     def from_config(cls, config):
         if config.edge_emb:
@@ -178,30 +229,31 @@ class SchNetEncoder(Module):
         else:
             edge_emb = None
 
-        #print(f"hidden_channels:{config.hidden_dim}")
-        #print(f"num_filters:{config.hidden_dim}")
-        #print(f"num_interactions:{config.num_convs}")
-        #print(f"cutoff:{config.cutoff}")
-        #print(f"smooth:{config.smooth_conv}")
-        #print(f"embedding:{False}")
-        #print(f"edge_emb:{edge_emb}")
-        #print(f"edge_activation:{config.mlp_act}")
+        # print(f"hidden_channels:{config.hidden_dim}")
+        # print(f"num_filters:{config.hidden_dim}")
+        # print(f"num_interactions:{config.num_convs}")
+        # print(f"cutoff:{config.cutoff}")
+        # print(f"smooth:{config.smooth_conv}")
+        # print(f"embedding:{False}")
+        # print(f"edge_emb:{edge_emb}")
+        # print(f"edge_activation:{config.mlp_act}")
 
         encoder = cls(
-                hidden_channels=config.hidden_dim,
-                num_filters=config.hidden_dim,
-                num_interactions=config.num_convs,
-                edge_channels=config.hidden_dim,
-                cutoff=config.cutoff,
-                smooth=config.smooth_conv,
-                embedding=False,
-                edge_emb=edge_emb,
-                edge_activation=config.mlp_act
-                )
+            hidden_channels=config.hidden_dim,
+            num_filters=config.hidden_dim,
+            num_interactions=config.num_convs,
+            edge_channels=config.hidden_dim,
+            cutoff=config.cutoff,
+            smooth=config.smooth_conv,
+            embedding=False,
+            edge_emb=edge_emb,
+            edge_activation=config.mlp_act,
+            temb_channels=config.temb_channels
+        )
         return encoder
 
     def forward(
-        self, z, edge_index, edge_length, edge_attr=None, embed_node=False, **kwargs
+        self, t, z, edge_index, edge_length, edge_length_T, edge_attr=None, embed_node=False, **kwargs
     ):
         if embed_node:
             assert z.dim() == 1 and z.dtype == torch.long and self.embedding
@@ -210,16 +262,15 @@ class SchNetEncoder(Module):
             h = z
 
         if edge_attr is None:
-            if hasattr(kwargs, "edge_type"):
-                edge_type_r, edge_type_p = kwargs["edge_type"]
-                edge_emb_r = self.edge_emb(edge_type_r) 
-                edge_emb_p = self.edge_emb(edge_type_p) 
-                edge_d_emb = self.edge_d_emb(edge_length)
-                edge_attr = self.edge_cat(
-                        torch.cat(
-                            [edge_d_emb * edge_emb_r, edge_d_emb * edge_emb_p],
-                            -1)
-                        )
+            raise NotImplementedError("edge_attr is required")
+            # if hasattr(kwargs, "edge_type"):
+            #     edge_type_r, edge_type_p = kwargs["edge_type"]
+            #     edge_emb_r = self.edge_emb(edge_type_r)
+            #     edge_emb_p = self.edge_emb(edge_type_p)
+            #     edge_d_emb = self.edge_d_emb(edge_length)
+            #     edge_attr = self.edge_cat(
+            #         torch.cat([edge_d_emb * edge_emb_r, edge_d_emb * edge_emb_p], -1)
+            #     )
         for interaction in self.interactions:
-            h = h + interaction(h, edge_index, edge_length, edge_attr)
+            h = h + interaction(t, h, edge_index, edge_length, edge_attr)
         return h

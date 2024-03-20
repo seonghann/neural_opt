@@ -193,15 +193,15 @@ class RxnGraph:
     def full_edge(self, upper_triangle=True):
         # make fully connected graph
         N = self.num_nodes
-        r_adj = torch.sparse.LongTensor(self.edge_index, self.edge_feat_r, torch.Size([N, N]))
-        p_adj = torch.sparse.LongTensor(self.edge_index, self.edge_feat_p, torch.Size([N, N]))
+        r_adj = torch.sparse_coo_tensor(self.edge_index, self.edge_feat_r, torch.Size([N, N]))
+        p_adj = torch.sparse_coo_tensor(self.edge_index, self.edge_feat_p, torch.Size([N, N]))
 
         edge_index_list = []
         for idx in unbatch(torch.arange(N), self.batch):
             edge_index_list.append(torch.combinations(idx).to(self.device).T)
         edge_index = torch.cat(edge_index_list, dim=1)
 
-        full_adj = torch.sparse.LongTensor(
+        full_adj = torch.sparse_coo_tensor(
             edge_index,
             torch.ones_like(edge_index[0]).long().to(self.device),
             torch.Size([N, N])

@@ -5,19 +5,26 @@ train:
   batch_size: 32
   num_workers: 4
   # num_workers: 1
-  lambda_train: 0 # 0.01
-  lambda_valid: 0 # 0.01
+  # lambda_train: 0 # 0.01
+  # lambda_valid: 0 # 0.01
+  lambda_x_train: 0 # NOTE: For debugging
+  lambda_q_train: 1 # NOTE: For debugging
+  lambda_x_valid: 0 # NOTE: For debugging
+  lambda_q_valid: 1 # NOTE: For debugging
   clip_grad: 5  # float, null to disable
   progress_bar: False
   weight_decay: 1e-12
   optimizer: adamw
   seed: 1994
   lr: 0.0005
-  epochs: 400
+  epochs: 10000
 
-  check_val_every_n_epoch: 1000
-  sample_every_n_batch: 1000
-  sample_every_n_valid: 2000
+  check_val_every_n_epoch: 30000
+  sample_every_n_batch: 30000
+  sample_every_n_valid: 30000
+
+  projection: True  # True or False
+  noise_type: manifold  # euclidean or manifold
 
 dataset:
   name: Geodesic2DFT
@@ -28,14 +35,12 @@ debug:
   save_dir: './debug'
 
 general:
-  # name: 'small_data_test_timefix_noiserandom2'
-  name: 'debug'
-  use_wandb: False
-  # use_wandb: True
+  name: 'test_leftnet'
+  # name: 'debug'
+  use_wandb: True
   wandb: 'online'
   save_model: True
-  # gpus: 1
-  gpus: 0
+  gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume: # ckpt path
   test_only: # /home/ksh/MolDiff/NeuralOpt/neural_opt/pl_test/checkpoints/fourth/epoch=96.ckpt
@@ -49,32 +54,10 @@ sampling:
   gode_max_dt: 0.1
   time_margin: 0.05
 
-# model:
-#   name: condensed
-#   hidden_dim: 128
-#   num_bond_type: 10
-#   num_atom_type: 4
-#   num_atom_feat: 8
-#   score_act: 'silu'
-#   edge_cat_act: 'silu'
-#   edge_encoder:
-#     name: 'mlp'
-#     activation: 'silu'
-#   graph_encoder:
-#     name: 'schnet'
-#     node_dim: 128
-#     time_dim: 256
-#     edge_dim: 128
-#     num_filters: 128
-#     num_convs: 8
-#     cutoff: 10.0
-#     smooth_conv: False
-
 model:
   name: equivariant  # condensed
-  # name: condensed
+  pred_type: node
   hidden_dim: 128
-  # hidden_channels: 196
   hidden_channels: 128 # same with hidden_dim
   num_bond_type: 10
   num_atom_type: 4
@@ -89,12 +72,10 @@ model:
     pos_require_grad: False
     cutoff: 10.0
     num_layers: 6
-    # hidden_channels: 196
     hidden_channels: 128 # same with hidden_dim
     num_radial: 96
     in_hidden_channels: 165 #  num_atom_feat * 10 * 2 + num_atom_type + 1
     reflect_equiv: True
-    # legacy: False
     legacy: True
     update: True
     pos_grad: False
@@ -126,3 +107,4 @@ manifold:
     _min_dt: 1e-4
     pos_adjust_scaler: 0.03
     pos_adjust_thresh: 3e-3
+    q_type: morse

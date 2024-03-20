@@ -29,6 +29,14 @@ def timer(func):
     return wrapper
 
 
+def get_pad_mask(num_nodes):
+    N = num_nodes.max()
+    mask = torch.BoolTensor([True, False]).repeat(len(num_nodes)).to(num_nodes.device)
+    num_repeats = torch.stack([num_nodes, N - num_nodes]).T.flatten()
+    mask = mask.repeat_interleave(num_repeats)
+    return mask
+
+
 def redefine_edge_index(edges, batch, num_nodes):
     """
     Given edge_index are block diagonal.
@@ -453,18 +461,35 @@ class GeodesicSolver(object):
         hess = torch.sparse_coo_tensor(index, val, (B, 9 * n ** 2, e))
         return hess
 
-    def dq2dx(self, dq, pos, edge_index, atom_type):
+    def dq2dx(self, dq, pos, edge_index, atom_type, q_type="morse"):
         # dx = J^-1 dq
-        jacob = self.jacobian_q(edge_index, atom_type, pos)
+        if q_type == "morse":
+            jacob = self.jacobian_q(edge_index, atom_type, pos)
+        elif q_type == "DM":
+            jacob = self.jacobian_d(edge_index, pos)
+        else:
+            raise NotImplementedError
         jacob_inv = torch.linalg.pinv(jacob, rtol=1e-4, atol=self.svd_tol)
         dx = jacob_inv @ dq
         return dx
 
-    def dx2dq(self, dx, pos, edge_index, atom_type):
+    def dx2dq(self, dx, pos, edge_index, atom_type, q_type="morse"):
         # dq = J dx
-        jacob = self.jacobian_q(edge_index, atom_type, pos)
+        if q_type == "morse":
+            jacob = self.jacobian_q(edge_index, atom_type, pos)
+        elif q_type == "DM":
+            jacob = self.jacobian_d(edge_index, pos)
+        else:
+            raise NotImplementedError
         dq = jacob @ dx.flatten()
         return dq
+
+    def dq_dd(self, pos, atom_type, edge_index, q_type="morse"):
+        i, j = edge_index
+        d_ij = self.compute_d(edge_index, pos)
+        d_e_ij = self.compute_de(edge_index, atom_type)
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2
+        return dq_dd
 
     def batch_compute_q(self, index_tensor, atom_type, x):
         B = index_tensor[0].max() + 1
@@ -521,7 +546,6 @@ class GeodesicSolver(object):
             batch: torch.Tensor, batch tensor (N, )
             num_nodes: torch.Tensor, number of nodes tensor (B, )
         """
-        # print(x.dtype)
         x, x_dot, total_time, q, q_dot, atom_type, index_tensor = self.batch_initialize(
             x,
             q_dot,
@@ -633,6 +657,43 @@ class GeodesicSolver(object):
         stats = {"iter": iter, "current_time": current_time, "total_time": total_time, "ban_index": ban_index}
 
         return init, last, iter, index_tensor, stats
+
+    def batch_project(self, query_vec, pos, atom_type, edge_index, batch, num_nodes, q_type="morse", proj_type="euclidean"):
+        if q_type == "morse":
+            calc_jacob = self.sparse_batch_jacobian_q
+        elif q_type == "DM":
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        assert proj_type in ["euclidean", "manifold"]
+
+        B = batch.max() + 1
+        n = num_nodes.max()
+        e = n * (n - 1) // 2
+
+        index_tensor = redefine_edge_index(edge_index, batch, num_nodes)  # (4, E)
+        atom_type = redefine_with_pad(atom_type, batch, padding_value=-1)  # (B, n)
+        pos = redefine_with_pad(pos, batch)  # (B, n, 3)
+
+        J = calc_jacob(index_tensor, pos, atom_type=atom_type).to_dense()  # (B, e, 3n)
+        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
+
+        if proj_type == "euclidean":
+            x = redefine_with_pad(query_vec, batch)  # (B, n, 3)
+            proj_matrix = torch.bmm(J_inv, J)  # (B, 3n, 3n)
+            proj = torch.bmm(proj_matrix, x.reshape(B, -1, 1)).reshape(-1, 3)
+            pad_mask = get_pad_mask(num_nodes)
+            proj = proj[pad_mask]
+
+        elif proj_type == "manifold":
+            x = torch.sparse_coo_tensor(index_tensor[:2], query_vec.flatten(), (B, e),).to_dense()
+            proj_matrix = torch.bmm(J, J_inv)  # (B, e, e)
+            proj = torch.bmm(proj_matrix, x.reshape(B, -1, 1)).squeeze(-1)  # (B, e)
+            pad_mask = index_tensor[1] + index_tensor[0] * e
+            proj = proj.flatten()[pad_mask]
+
+        return proj
 
     def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
                          pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, verbose=0):

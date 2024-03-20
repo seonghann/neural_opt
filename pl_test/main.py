@@ -20,7 +20,6 @@ if __name__ == '__main__':
     import pathlib
 
     # Test data load
-    # config = OmegaConf.load('configs/config.yaml')
     if len(sys.argv) == 1:
         config_file = "configs/config.yaml"
     else:
@@ -78,8 +77,8 @@ if __name__ == '__main__':
 
     if not config.general.test_only:
         trainer.fit(model, datamodule=datamodule, ckpt_path=config.general.resume)
-        if config.general.name not in ['debug', 'test']:
-            trainer.test(model, datamodule=datamodule)
+        # if config.general.name not in ['debug', 'test']:
+        #     trainer.test(model, datamodule=datamodule)
     else:
         trainer.test(model, datamodule=datamodule, ckpt_path=config.general.test_only)
         if config.general.evaluate_all_checkpoints:

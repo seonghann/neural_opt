@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 import random
 
 from ase import io
-from torch_geometric.data import Data, InMemoryDataset, download_url
+from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.data.lightning import LightningDataset
 import torch
 
@@ -91,13 +91,12 @@ class GrambowDataset(InMemoryDataset):
         random.shuffle(total_index)
 
         if self.file_idx == 0:  # train, 80%
-            index = total_index[:int(num_data * 0.8)]
+            # index = total_index[:int(num_data * 0.8)]
+            index = total_index[:1]
         elif self.file_idx == 1:
             index = total_index[int(num_data * 0.8):int(num_data * 0.9)]
         else:
-            # index = total_index[int(num_data * 0.9):]
-        # index = total_index[int(num_data * 0.98):]
-            index = total_index[-1:]
+            index = total_index[int(num_data * 0.9):]
         return index
 
     def process(self):
@@ -181,8 +180,7 @@ class GrambowDataModule(AbstractDataModule):
         print(f"\n\troot_path: {root_path}")
 
         datasets = {
-            # "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="train"),
-            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="test"),
+            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="train"),
             "val": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="valid"),
             "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="test")
         }

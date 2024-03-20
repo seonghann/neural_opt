@@ -7,12 +7,13 @@ import wandb
 
 
 class LossFunction(nn.Module):
-    def __init__(self, _lambda, name='train'):
+    def __init__(self, lambda_x, lambda_q, name='train'):
         super().__init__()
         self.name = name
         self.metric_x = SquareLoss("euclidean")
         self.metric_q = SquareLoss("riemannian")
-        self._lambda = _lambda
+        self.lambda_x = lambda_x
+        self.lambda_q = lambda_q
 
     def reset(self,):
         for metric in [self.metric_x, self.metric_q]:
@@ -27,13 +28,17 @@ class LossFunction(nn.Module):
             to_log[f"{self.name}/loss_q"] = loss_q.item()
             if wandb.run:
                 wandb.log(to_log)
-        return loss_q + self._lambda * loss_x
+        # return loss_q + self._lambda * loss_x
+        # return loss_x + self._lambda * loss_q
+        return loss_x * self.lambda_x + loss_q * self.lambda_q
 
     def log_epoch_metrics(self,):
         to_log = {}
         loss_x = self.metric_x.compute().item()
         loss_q = self.metric_q.compute().item()
-        loss = loss_q + self._lambda * loss_x
+        # loss = loss_q + self._lambda * loss_x
+        # loss = loss_x + self._lambda * loss_q
+        loss = loss_x * self.lambda_x + loss_q * self.lambda_q
         to_log[f"{self.name}_epoch/loss_x"] = loss_x
         to_log[f"{self.name}_epoch/loss_q"] = loss_q
         to_log[f"{self.name}_epoch/loss"] = loss
@@ -88,7 +93,7 @@ class TrainMetrics(nn.Module):
 
 
 class ValidMetrics(nn.Module):
-    def __init__(self, manifold, name='valid', _lambda=0.01):
+    def __init__(self, manifold, name='valid', lambda_x=0.0, lambda_q=1.0):
         super().__init__()
         self.name = name
         self.rmsd_metrics = MetricRMSD()
@@ -96,7 +101,8 @@ class ValidMetrics(nn.Module):
         self.proj_metrics = MetricProj()
         self.loss_x = SquareLoss("euclidean")
         self.loss_q = SquareLoss("riemannian")
-        self._lambda = _lambda
+        self.lambda_x = lambda_x
+        self.lambda_q = lambda_q
         self.manifold = manifold
 
     def forward(
@@ -124,7 +130,9 @@ class ValidMetrics(nn.Module):
         self.proj_metrics(proj_q, pred_q, target_q, edge2graph)
         loss_x = self.loss_x(pred_x, target_x, node2graph)
         loss_q = self.loss_q(pred_q, target_q, edge2graph)
-        loss = loss_q + self._lambda * loss_x
+        # loss = loss_q + self._lambda * loss_x
+        # loss = loss_x + self._lambda * loss_q
+        loss = loss_x * self.lambda_x + loss_q * self.lambda_q
         if log:
             to_log = {f"{self.name}/loss": loss.item()}
             for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
@@ -140,7 +148,9 @@ class ValidMetrics(nn.Module):
     def log_epoch_metrics(self,):
         loss_x = self.loss_x.compute()
         loss_q = self.loss_q.compute()
-        loss = loss_q + self._lambda * loss_x
+        # loss = loss_q + self._lambda * loss_x
+        # loss = loss_x + self._lambda * loss_q
+        loss = loss_x * self.lambda_x + loss_q * self.lambda_q
         to_log = {f"{self.name}_epoch/loss": loss}
         for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
             for k, v in metric.compute().items():

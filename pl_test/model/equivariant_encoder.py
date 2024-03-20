@@ -167,6 +167,4 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         edge_attr = self.bond_embedding(rxn_graph)
 
         pred = self.encoder(h_t, z_t, pos, pos_T, edge_index, edge_attr)  # (n_atoms, 3)
-        print(f"Debug: pred.shape={pred.shape}")
-        exit("Test equivariant_encoder")
         return pred

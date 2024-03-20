@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch_geometric.utils import to_dense_adj
 import numpy as np
 
@@ -21,7 +22,8 @@ class CondensedEncoderEpsNetwork(nn.Module):
         assert config.hidden_dim % 2 == 0
         self.atom_embedding = nn.Embedding(config.num_atom_type, config.hidden_dim // 2)
         self.atom_feat_embedding = nn.Linear(
-            config.num_atom_feat, config.hidden_dim // 2, bias=False
+            # config.num_atom_feat, config.hidden_dim // 2, bias=False
+            config.num_atom_feat * 10, config.hidden_dim // 2, bias=False
         )
         self.encoder = load_encoder(config)  # graph neural network
         self.score_mlp = MultiLayerPerceptron(
@@ -77,16 +79,22 @@ class CondensedEncoderEpsNetwork(nn.Module):
             pos: structure of noisy structure (N, 3)
             pos_T: structure of initial structure (at time = 1) (N, 3)
         """
-        for p in self.named_parameters():
-            print(p)
+        # for p in self.named_parameters():
+        #     print(p)
 
         batch = rxn_graph.batch  # batch: batch index (N, )
         tt_node = tt.index_select(0, batch).unsqueeze(-1)  # Convert tt (G, ) to (N, 1)
 
         # 1) condensed atom embedding
         atom_emb = self.atom_embedding(rxn_graph.atom_type)
-        atom_feat_emb_r = self.atom_feat_embedding(rxn_graph.r_feat.float())
-        atom_feat_emb_p = self.atom_feat_embedding(rxn_graph.p_feat.float())
+        n_atoms = atom_emb.size(0)
+        r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10).reshape(n_atoms, -1)
+        p_feat = F.one_hot(rxn_graph.r_feat, num_classes=10).reshape(n_atoms, -1)
+        atom_feat_emb_r = self.atom_feat_embedding(r_feat.float())
+        atom_feat_emb_p = self.atom_feat_embedding(p_feat.float())
+
+        # atom_feat_emb_r = self.atom_feat_embedding(rxn_graph.r_feat.float())
+        # atom_feat_emb_p = self.atom_feat_embedding(rxn_graph.p_feat.float())
         z1 = atom_emb + atom_feat_emb_r
         z2 = atom_feat_emb_p - atom_feat_emb_r
         zz = torch.cat([z1, z2], dim=-1)

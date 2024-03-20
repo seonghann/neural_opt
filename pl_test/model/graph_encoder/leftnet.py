@@ -9,10 +9,8 @@ from torch import nn, Tensor
 from torch_geometric.nn.conv import MessagePassing
 from torch_scatter import scatter, scatter_mean
 
-import sys
-sys.path.append("/home/jhwoo/programs/OAReactDiff")
-from oa_reactdiff.model.util_funcs import unsorted_segment_sum
-from oa_reactdiff.model.core import MLP
+from .leftnet_utils.util_funcs import unsorted_segment_sum
+from .leftnet_utils.core import MLP
 
 EPS = 1e-6
 

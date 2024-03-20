@@ -19,6 +19,8 @@ class GaussianSmearingEdgeEncoder(Module):
     def __init__(self, num_gaussians=64, cutoff=10.0):
         super().__init__()
         # self.NUM_BOND_TYPES = 22
+        raise NotImplementedError("This is not implemented yet")
+
         self.num_gaussians = num_gaussians
         self.cutoff = cutoff
         self.rbf = GaussianSmearing(
@@ -48,14 +50,14 @@ class MLPEdgeEncoder(Module):
         self.hidden_dim = hidden_dim
         self.bond_emb = Embedding(100, embedding_dim=self.hidden_dim)
         self.mlp = MultiLayerPerceptron(
-            1, [self.hidden_dim, self.hidden_dim], activation=activation
+            2, [self.hidden_dim, self.hidden_dim], activation=activation
         )
 
     @property
     def out_channels(self):
         return self.hidden_dim
 
-    def forward(self, edge_length, edge_type):
+    def forward(self, edge_length, edge_length_T, edge_type):
         """
         Input:
             edge_length: The length of edges, shape=(E, 1).
@@ -63,7 +65,7 @@ class MLPEdgeEncoder(Module):
         Returns:
             edge_attr:  The representation of edges. (E, 2 * num_gaussians)
         """
-        d_emb = self.mlp(edge_length)  # (num_edge, hidden_dim)
+        d_emb = self.mlp(edge_length, edge_length_T)  # (num_edge, hidden_dim)
         edge_attr = self.bond_emb(edge_type)  # (num_edge, hidden_dim)
         return d_emb * edge_attr  # (num_edge, hidden)
 
