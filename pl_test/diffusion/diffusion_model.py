@@ -4,7 +4,7 @@ import time
 
 import os.path as osp
 
-from model.condensed_encoder import CondenseEncoderEpsNetwork
+from model.condensed_encoder import CondensedEncoderEpsNetwork
 from model.equivariant_encoder import EquivariantEncoderEpsNetwork
 from utils.wandb_utils import setup_wandb
 from utils.rxn_graph import RxnGraph, DynamicRxnGraph
@@ -36,7 +36,7 @@ class BridgeDiffusion(pl.LightningModule):
         if config.model.name == "equivariant":
             self.NeuralNet = EquivariantEncoderEpsNetwork(config.model)
         elif config.model.name == "condensed":
-            self.NeuralNet = CondenseEncoderEpsNetwork(config.model)
+            self.NeuralNet = CondensedEncoderEpsNetwork(config.model)
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
         self.rxn_graph = RxnGraph

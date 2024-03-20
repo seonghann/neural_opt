@@ -92,8 +92,7 @@ model:
     # hidden_channels: 196
     hidden_channels: 128 # same with hidden_dim
     num_radial: 96
-    # in_hidden_channels: 165 #  num_atom_feat * 10 * 2 + num_atom_type + 1
-    in_hidden_channels: 162 #  10 * 2 + num_atom_type + 2
+    in_hidden_channels: 165 #  num_atom_feat * 10 * 2 + num_atom_type + 1
     reflect_equiv: True
     # legacy: False
     legacy: True

@@ -1,78 +1,123 @@
+from typing import Tuple
+
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from utils.chem import BOND_TYPES_DECODER
+from utils.rxn_graph import RxnGraph
 from model.utils import load_edge_encoder, load_encoder, get_distance
+from omegaconf.dictconfig import DictConfig
 
 
 class AtomEncoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: DictConfig):
         super().__init__()
         self.config = config
         assert config.hidden_dim % 2 == 0
-        self.atom_encoder = nn.Embedding(config.num_atom_type, config.hidden_dim // 2)
-        self.atom_feat_encoder = nn.Linear(config.num_atom_feat * 10, config.hidden_dim // 2, bias=False)
 
-    def forward(self, atom_type, r_feat, p_feat):
+        # self.atom_encoder = nn.Embedding(config.num_atom_type, config.hidden_dim // 2)
+        self.atom_encoder = nn.Linear(
+            config.num_atom_type, config.hidden_dim // 2, bias=False
+        )
+        self.atom_feat_encoder = nn.Linear(
+            config.num_atom_feat * 10, config.hidden_dim // 2, bias=False
+        )
+        return
+
+    def forward(
+        self,
+        atom_type: torch.Tensor,
+        r_feat: torch.Tensor,
+        p_feat: torch.Tensor,
+    ) -> torch.Tensor:
         """args:
-        atom_type: (n_atom)
-        r_feat: (n_atom, n_feat) one-hot encoding of atom feat
-        p_feat: (n_atom, n_feat) one-hot encoding of atom feat
+        atom_type: (natoms, num_atom_type) one-hot encoding of atom type
+        r_feat: (natoms, num_atom_feat * 10) one-hot encoding of atom feat
+        p_feat: (natoms, num_atom_feat * 10) one-hot encoding of atom feat
+
+        z: (natoms, 2 * num_atom_feat * 10 + num_atom_type)
         """
         ## Refer to model.condensed_encoder.graph_encoding()
 
-        atom_emb = self.atom_encoder(atom_type)
+        atom_emb = self.atom_encoder(atom_type.float())
         atom_feat_emb_r = self.atom_feat_encoder(r_feat.float())
         atom_feat_emb_p = self.atom_feat_encoder(p_feat.float())
-        h1 = atom_emb * atom_feat_emb_r
-        h2 = atom_emb * atom_feat_emb_p
-        h = torch.cat([h1, h2], dim=-1)  # shape==(natoms, hidden_dim)
-        return h
+
+        z1 = atom_emb + atom_feat_emb_r
+        z2 = atom_feat_emb_p - atom_feat_emb_r
+        z = torch.cat([z1, z2], dim=-1)
+        return z
 
 
 class EquivariantEncoderEpsNetwork(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: DictConfig):
         super().__init__()
         self.config = config  # model config
         """
         edge_encoder:  Takes both edge type and edge length as input and outputs a vector
         [Note]: node embedding is done in SchNetEncoder
         """
+        self.check_encoder_config()
+
         self.node_encoder = AtomEncoder(config)
         self.edge_encoder = load_edge_encoder(config)
-        assert config.hidden_dim % 2 == 0
         self.encoder = load_encoder(config)  # graph neural network
 
-        self.model = nn.ModuleList(
-            [self.node_encoder, self.edge_encoder, self.encoder]
-        )
+        self.model = nn.ModuleList([self.node_encoder, self.edge_encoder, self.encoder])
 
-        self.z_t_embedding = nn.Linear(
-            config.hidden_dim + 1, config.hidden_channels
-        )
+        self.z_t_embedding = nn.Linear(config.hidden_dim + 1, config.hidden_channels)
 
         self.model_embedding = nn.ModuleList([self.z_t_embedding])
         return
 
-    def atom_embedding(self, rxn_graph):
-        ## !!! CondenseEncoderEpsNetwork와는 방식에 차이 있음.
-        ## atom_type_embedding과 atom_feat_embedding을 따로 진행.
-        ## 여기서는, 한번에 진행.
-        atom_type = rxn_graph.atom_type
-        n_atoms = atom_type.size(0)
-        r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10).reshape(n_atoms, -1)
-        p_feat = F.one_hot(rxn_graph.p_feat, num_classes=10).reshape(n_atoms, -1)
+    def check_encoder_config(self) -> None:
+        ## Check config is valid
+        available_graph_encoders = ["leftnet"]
+        assert (
+            self.config.graph_encoder.name.lower() in available_graph_encoders
+        ), f"graph_encoder.name must be one of {available_graph_encoders}"
+        assert self.config.hidden_dim % 2 == 0, "hidden_dim must be an even number"
+        assert (
+            self.config.hidden_channels == self.config.graph_encoder.hidden_channels
+        ), "hidden_channels must match graph_encoder.hidden_channels"
+        assert (
+            self.config.hidden_channels == self.config.hidden_dim
+        ), "hidden_channels must match hidden_dim"
+        return
 
+    def atom_embedding(self, rxn_graph: RxnGraph) -> Tuple[torch.Tensor, torch.Tensor]:
+        natoms = len(rxn_graph.atom_type)
+        num_atom_type = self.config.num_atom_type
+        num_atom_feat = self.config.num_atom_feat
+
+        ## 1) One-hot encoding
+        atom_type = F.one_hot(rxn_graph.atom_type, num_classes=num_atom_type)
+        r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10)
+        p_feat = F.one_hot(rxn_graph.p_feat, num_classes=10)
+
+        atom_type = atom_type.reshape(natoms, num_atom_type)
+        r_feat = r_feat.reshape(natoms, num_atom_feat * 10)
+        p_feat = p_feat.reshape(natoms, num_atom_feat * 10)
+
+        ## 2) Embedding to z
         z = self.node_encoder(atom_type, r_feat, p_feat)  # shape==(natoms, hidden_dim)
-        h = torch.cat([atom_type.unsqueeze(dim=-1), r_feat, p_feat], dim=-1)
-        # h.shape==(natoms, num_atom_feat * 10 * 2 + num_atom_type + 1)
+
+        ## 3) Concat one-hot encoded values
+        h = torch.cat([atom_type, r_feat, p_feat], dim=-1)
+        # h.shape==(natoms, num_atom_type + num_atom_feat * 10 * 2)
         return z, h
 
-    def bond_embedding(self, rxn_graph, emb_type="bond_w_d"):
+    def bond_embedding(
+        self,
+        rxn_graph: RxnGraph,
+        emb_type: str = "bond_w_d",
+    ) -> torch.Tensor:
         ## Refer to condensed_encoder.condensed_edge_embedding()
         available_option = ["bond_w_d", "bond_wo_d", "add_d"]
-        assert emb_type in available_option, f"{emb_type} must be one of {available_option}"
+        assert (
+            emb_type in available_option
+        ), f"{emb_type} must be one of {available_option}"
 
         _enc = self.edge_encoder
         _cat_fn = self.edge_encoder.cat_fn
@@ -98,22 +143,30 @@ class EquivariantEncoderEpsNetwork(nn.Module):
 
         return edge_attr
 
-    def forward(self, rxn_graph, **kwargs):
+    def forward(
+        self,
+        rxn_graph: RxnGraph,
+        **kwargs,
+    ) -> torch.Tensor:
         """
         args: rxn_graph (DynamicRxnGraph): rxn graph object
         """
         z, h = self.atom_embedding(rxn_graph)
 
-        ## Time embedding
+        ## Time feature concat and embedding
         t_node = rxn_graph.t.index_select(0, rxn_graph.batch).unsqueeze(-1)
-        h_t = torch.cat([h, t_node], dim=-1)  # shape==(natoms, 2 * 10 * num_atom_feat + 2)
+        h_t = torch.cat([h, t_node], dim=-1)
         z_t = torch.cat([z, t_node], dim=-1)
-        z_t = self.z_t_embedding(z_t)  # shape==(natoms, hidden_channels)
+        z_t = self.z_t_embedding(z_t)
+        # h_t.shape==(natoms, num_atom_type + num_atom_feat * 10 * 2)
+        # z_t.shape==(natoms, hidden_channels)
 
         pos = rxn_graph.pos
         pos_T = rxn_graph.pos_init
         edge_index = rxn_graph.full_edge()[0]
         edge_attr = self.bond_embedding(rxn_graph)
 
-        pred = self.encoder(h_t, z_t, pos, pos_T, edge_index, edge_attr)   # (n_atoms, 3)
+        pred = self.encoder(h_t, z_t, pos, pos_T, edge_index, edge_attr)  # (n_atoms, 3)
+        print(f"Debug: pred.shape={pred.shape}")
+        exit("Test equivariant_encoder")
         return pred

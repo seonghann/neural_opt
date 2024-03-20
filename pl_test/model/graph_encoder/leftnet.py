@@ -838,7 +838,7 @@ class LEFTNet(torch.nn.Module):
         # (above is wrong. Fixed) f is distance embedding, shape: (n_edge, 2 * hidden_channels)
 
         # init node features
-        # z_emb = self.embedding(h)
+        # z_emb = self.embedding(h)  # z_emb (embedding of h) is specified externally.
         s = self.neighbor_emb(h, z_emb, edge_index, f)  # masked by all_edge_masks  # TODO remove "z_emb"
         # s is f (distance) based node embedding: (n_atom, 196)
         # both s and f is E(3) invariant
@@ -875,8 +875,8 @@ class LEFTNet(torch.nn.Module):
 
         # Added by Seonghwan (Add the graph connectivity information to the scalarization)
         # TODO: scalar3, scalar4, edge_attr의 dimension mis-match 문제: 현재는, hidden_channels와 hidden_dim이 같을 때만 돌 수 있음.
-        ## scalar3, scalar4: [natoms, hidden_channels]   # [2914, 196]
-        ## edge_attr: [natoms, hidden_dim]    # [2914, 128]
+        ## scalar3, scalar4: [nedge, hidden_channels]
+        ## edge_attr: [nedge, hidden_dim]
         scalar3 = scalar3 * edge_attr
         scalar4 = scalar4 * edge_attr
 
