@@ -1,7 +1,6 @@
 import omegaconf
 import wandb
 
-
 def setup_wandb(config):
     if config.general.use_wandb:
         config_dict = omegaconf.OmegaConf.to_container(config, resolve=True, throw_on_missing=True)

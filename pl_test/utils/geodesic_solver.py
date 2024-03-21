@@ -617,7 +617,7 @@ class GeodesicSolver(object):
                     done[ban_index] = True
                     ref_dt[ban_index] = min_dt
 
-                    if verbose >= 0:
+                    if verbose >= 1:
                         print(f"[Warning] Some samples ({new_ban}) are banned due to numerical unstability.")
                         print("[Warning] veolocity error is too large, restart with smaller time step.")
                         print(f"err = {err[err > err_thresh]}")
@@ -658,7 +658,7 @@ class GeodesicSolver(object):
 
         return init, last, iter, index_tensor, stats
 
-    def batch_project(self, query_vec, pos, atom_type, edge_index, batch, num_nodes, q_type="morse", proj_type="euclidean"):
+    def batch_projection(self, query_vec, pos, atom_type, edge_index, batch, num_nodes, q_type="morse", proj_type="euclidean"):
         if q_type == "morse":
             calc_jacob = self.sparse_batch_jacobian_q
         elif q_type == "DM":
@@ -694,6 +694,57 @@ class GeodesicSolver(object):
             proj = proj.flatten()[pad_mask]
 
         return proj
+
+    def batch_dx2dq(self, dx, pos, atom_type, edge_index, batch, num_nodes, q_type="morse"):
+        if q_type == "morse":
+            calc_jacob = self.sparse_batch_jacobian_q
+        elif q_type == "DM":
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        B = num_nodes.size(0)
+        n = num_nodes.max()
+        e = n * (n - 1) // 2
+
+        index_tensor = redefine_edge_index(edge_index, batch, num_nodes)  # (4, E)
+        atom_type = redefine_with_pad(atom_type, batch, padding_value=-1)  # (B, n)
+        pos = redefine_with_pad(pos, batch)  # (B, n, 3)
+        dx = redefine_with_pad(dx, batch)  # (B, n, 3)
+
+        J = calc_jacob(index_tensor, pos, atom_type=atom_type).to_dense()  # (B, e, 3n)
+
+        dq = torch.bmm(J, dx.reshape(B, -1, 1))
+        pad_mask = index_tensor[1] + index_tensor[0] * e
+        dq = dq.flatten()[pad_mask]
+
+        return dq
+
+    def batch_dq2dx(self, dq, pos, atom_type, edge_index, batch, num_nodes, q_type="morse"):
+        if q_type == "morse":
+            calc_jacob = self.sparse_batch_jacobian_q
+        elif q_type == "DM":
+            calc_jacob = self.sparse_batch_jacobian_d
+        else:
+            raise NotImplementedError
+
+        B = num_nodes.size(0)
+        n = num_nodes.max()
+        e = n * (n - 1) // 2
+
+        index_tensor = redefine_edge_index(edge_index, batch, num_nodes)  # (4, E)
+        atom_type = redefine_with_pad(atom_type, batch, padding_value=-1)  # (B, n)
+        pos = redefine_with_pad(pos, batch)  # (B, n, 3)
+        dq = torch.sparse_coo_tensor(index_tensor[:2], dq.flatten(), (B, e),).to_dense()  # (B, e)
+
+        J = calc_jacob(index_tensor, pos, atom_type=atom_type).to_dense()  # (B, e, 3n)
+        J_inv = batch_pinv1(J, rtol=1e-4, atol=self.svd_tol)  # (B, 3n, e)
+
+        dx = torch.bmm(J_inv, dq.reshape(B, -1, 1)).reshape(-1, 3)
+        pad_mask = get_pad_mask(num_nodes)
+        dx = dx[pad_mask]
+
+        return dx
 
     def batch_initialize(self, x, q_dot, edge_index, atom_type, batch, num_nodes, q_type="morse",
                          pos_adjust_scaler=0.05, pos_adjust_thresh=1e-3, verbose=0):

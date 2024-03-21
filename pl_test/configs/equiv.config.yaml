@@ -2,12 +2,12 @@
 # train contains batch_size, num_workers
 
 train:
-  batch_size: 32
-  num_workers: 4
+  batch_size: 64
+  num_workers: 8
   # num_workers: 1
   # lambda_train: 0 # 0.01
   # lambda_valid: 0 # 0.01
-  lambda_x_train: 0 # NOTE: For debugging
+  lambda_x_train: 0.1 # NOTE: For debugging
   lambda_q_train: 1 # NOTE: For debugging
   lambda_x_valid: 0 # NOTE: For debugging
   lambda_q_valid: 1 # NOTE: For debugging
@@ -16,10 +16,10 @@ train:
   weight_decay: 1e-12
   optimizer: adamw
   seed: 1994
-  lr: 0.0005
+  lr: 0.001
   epochs: 10000
 
-  check_val_every_n_epoch: 30000
+  check_val_every_n_epoch: 3
   sample_every_n_batch: 30000
   sample_every_n_valid: 30000
 
@@ -35,12 +35,12 @@ debug:
   save_dir: './debug'
 
 general:
-  name: 'test_leftnet'
+  name: 'leftnet-test2'
   # name: 'debug'
   use_wandb: True
   wandb: 'online'
   save_model: True
-  gpus: 1
+  gpus: 8
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume: # ckpt path
   test_only: # /home/ksh/MolDiff/NeuralOpt/neural_opt/pl_test/checkpoints/fourth/epoch=96.ckpt
@@ -63,7 +63,7 @@ model:
   num_atom_type: 4
   num_atom_feat: 8
   score_act: 'silu'
-  edge_cat_act: 'silu'
+  edge_cat_act: 'relu'
   edge_encoder:
     name: 'mlp'
     activation: 'silu'

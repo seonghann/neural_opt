@@ -91,8 +91,7 @@ class GrambowDataset(InMemoryDataset):
         random.shuffle(total_index)
 
         if self.file_idx == 0:  # train, 80%
-            # index = total_index[:int(num_data * 0.8)]
-            index = total_index[:1]
+            index = total_index[:int(num_data * 0.8)]
         elif self.file_idx == 1:
             index = total_index[int(num_data * 0.8):int(num_data * 0.9)]
         else:
