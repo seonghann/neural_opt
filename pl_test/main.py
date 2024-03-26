@@ -25,6 +25,7 @@ if __name__ == '__main__':
     else:
         config_file = sys.argv[-1]
     config = OmegaConf.load(config_file)
+    print(f"Debug: config=\n{config}")
     datamodule = GrambowDataModule(config)
     print(f"data load success: {datamodule}")
     print("-----------------------------------------------------")
@@ -37,6 +38,7 @@ if __name__ == '__main__':
     from pytorch_lightning import Trainer
     from pytorch_lightning.callbacks import ModelCheckpoint
     torch.set_default_dtype(torch.float32)
+    # torch.set_default_dtype(torch.float64)
     seed_everything(config.train.seed)
     use_gpu = config.general.gpus > 0 and torch.cuda.is_available()
     devices = config.general.gpus if use_gpu else 1

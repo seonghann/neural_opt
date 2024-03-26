@@ -17,11 +17,12 @@ class AtomEncoder(nn.Module):
         assert config.hidden_dim % 2 == 0
 
         # self.atom_encoder = nn.Embedding(config.num_atom_type, config.hidden_dim // 2)
+        bias = True
         self.atom_encoder = nn.Linear(
-            config.num_atom_type, config.hidden_dim // 2, bias=False
+            config.num_atom_type, config.hidden_dim // 2, bias=bias
         )
         self.atom_feat_encoder = nn.Linear(
-            config.num_atom_feat * 10, config.hidden_dim // 2, bias=False
+            config.num_atom_feat * 10, config.hidden_dim // 2, bias=bias
         )
         return
 

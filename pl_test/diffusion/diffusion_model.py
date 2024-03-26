@@ -66,9 +66,13 @@ class BridgeDiffusion(pl.LightningModule):
         self.test_counter = 0
 
     def forward(self, noisy_rxn_graph):
+        print(f"Debug: self.optim.lr = {self.optim.param_groups[0]['lr']}")
         return self.NeuralNet(noisy_rxn_graph).squeeze()
 
     def training_step(self, data, i):
+        print("===================================================")
+        print("===================================================")
+        print("===================================================")
 
         if self.config.train.noise_type == "manifold":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
@@ -132,12 +136,15 @@ class BridgeDiffusion(pl.LightningModule):
         SNR_ratio = g_length / g_last_length  # (G, T-1) SNR_ratio = SNR(1)/SNR(t)
         t = self.noise_schedule.get_time_from_SNRratio(SNR_ratio)  # (G, T-1)
         # NOTE: for debugging, fix time to near 0.5
-        # random_t = torch.ones(size=(t.size(0), 1), device=SNR_ratio.device) * 0.5
+        # random_t = torch.ones(size=(t.size(0), 1), device=SNR_ratio.device) * 0.5; print(f"Debug: Training debugging: Training is performed with only t=0.5")
         random_t = torch.rand(size=(t.size(0), 1), device=SNR_ratio.device)
+        # random_t = 0.7 * random_t; print(f"Debug: t:[0, 0.7] 만 sampling!!!")
+        # random_t = (0.3 + random_t) / 1.5; print(f"Debug: t:[0.2, 0.8] 만 sampling!!!")
         diff = abs(t - random_t)
         index = torch.argmin(diff, dim=1)
 
         t = t[(torch.arange(t.size(0)).to(index), index)]
+        print(f"Debug: t={t}")
         sampled_SNR_ratio = SNR_ratio[(torch.arange(SNR_ratio.size(0)).to(index), index)]
         return index, t, sampled_SNR_ratio
 
@@ -160,8 +167,6 @@ class BridgeDiffusion(pl.LightningModule):
         # sigma_hat = sigma * (1 - SNR_ratio)  # (G, )
         # NOTE : The above two is equivalent to
         sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
-        # print(f"time : {tt}")
-        # print(f"sigma_hat : {sigma_hat}")
         sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (E, )
         noise = torch.randn(size=(full_edge.size(1),), device=full_edge.device) * sigma_hat_edge.sqrt()  # dq, (E, )
 
@@ -173,6 +178,7 @@ class BridgeDiffusion(pl.LightningModule):
             graph.atom_type,
             node2graph,
             num_nodes,
+            q_type=self.q_type,
             num_iter=self.config.manifold.ode_solver.iter,
             max_iter=self.config.manifold.ode_solver.max_iter,
             ref_dt=self.config.manifold.ode_solver.ref_dt,
@@ -219,6 +225,7 @@ class BridgeDiffusion(pl.LightningModule):
                 graph.atom_type[node_select],
                 _batch,
                 _num_nodes,
+                q_type=self.q_type,
                 num_iter=self.config.manifold.ode_solver.iter,
                 max_iter=self.config.manifold.ode_solver.max_iter,
                 ref_dt=self.config.manifold.ode_solver._ref_dt,
@@ -255,10 +262,10 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             ban_index = torch.LongTensor([])
 
-        beta = self.noise_schedule.get_beta(tt)
-        coeff = beta / sigma_hat
+        # beta = self.noise_schedule.get_beta(tt)
+        # coeff = beta / sigma_hat
         # coeff = 1 / sigma_hat
-        # coeff = torch.ones_like(tt)
+        coeff = torch.ones_like(tt)
         coeff_node = coeff.index_select(0, node2graph)  # (N, )
         coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
         # target is not exactly the score function.
@@ -310,7 +317,12 @@ class BridgeDiffusion(pl.LightningModule):
         sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
 
         sigma_hat_node = sigma_hat.index_select(0, node2graph)  # (N, )
-        noise = torch.randn(size=(mean.size(),), device=full_edge.device) * sigma_hat_node.sqrt().unsqueeze(-1)  # dq, (E, )
+        # noise = torch.randn(size=(mean.size(),), device=full_edge.device) * sigma_hat_node.sqrt().unsqueeze(-1)  # dq, (E, )
+        noise = torch.randn(size=mean.size(), device=full_edge.device) * sigma_hat_node.sqrt().unsqueeze(-1)  # dq, (E, )
+        # print(f"Debug: mean={mean}")
+        # print(f"Debug: noise={noise}")
+        # print(f"Debug: sigma_hat.sqrt()={sigma_hat.sqrt()}")
+        # print(f"Debug: tt={tt}")
         pos_noise = mean + noise
 
         # beta = self.noise_schedule.get_beta(tt)
@@ -334,10 +346,13 @@ class BridgeDiffusion(pl.LightningModule):
         self.optim_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optim,
             mode='min',
-            factor=0.5,
+            factor=0.7,
             patience=30,
-            threshold=0.01,
+            # threshold=0.01,
             min_lr=1e-5,
+            # min_lr=1e-6,
+            # min_lr=1e-3,
+            # min_lr=1e-4,
         )
         return [self.optim]
 
@@ -349,7 +364,14 @@ class BridgeDiffusion(pl.LightningModule):
             self.train_metrics.reset()
 
     def on_train_epoch_end(self) -> None:
+        #############################################
         to_log = self.train_loss.log_epoch_metrics()
+        print(f"Debug: to_log={to_log}")
+        loss = list(to_log.values())[0]
+        self.optim_scheduler.step(loss)
+        print(f"Debug: loss={loss}")
+        #############################################
+
         msg = f"Epoch {self.current_epoch} "
         for k, v in to_log.items():
             msg += f"\n\t{k}: {v: 0.6f}"
@@ -588,6 +610,7 @@ class BridgeDiffusion(pl.LightningModule):
                 dynamic_rxn_graph.atom_type,
                 node2graph,
                 num_nodes,
+                q_type=self.q_type,
                 num_iter=self.config.manifold.ode_solver.iter,
                 max_iter=self.config.manifold.ode_solver.max_iter,
                 ref_dt=self.config.manifold.ode_solver.ref_dt,
@@ -622,6 +645,7 @@ class BridgeDiffusion(pl.LightningModule):
                     dynamic_rxn_graph.atom_type[node_select],
                     _batch,
                     _num_nodes,
+                    q_type=self.q_type,
                     num_iter=500,
                     max_iter=2000,
                     ref_dt=self.config.manifold.ode_solver._ref_dt,
@@ -664,7 +688,7 @@ class BridgeDiffusion(pl.LightningModule):
         return samples
 
     def get_h_transform(self, pos, pos_init, t, edge_index, atom_type):
-        diff = self.geodesic_solver.compute_q(edge_index, atom_type, pos_init) - self.geodesic_solver.compute_q(edge_index, atom_type, pos)
+        diff = self.geodesic_solver.compute_q(edge_index, atom_type, pos_init, q_type=self.q_type) - self.geodesic_solver.compute_q(edge_index, atom_type, pos, q_type=self.q_type)
         coeff = self.noise_schedule.get_sigma(torch.ones_like(t)) - self.noise_schedule.get_sigma(t)
         beta = self.noise_schedule.get_beta(t)
         coeff = torch.exp(torch.log(beta) - torch.log(coeff))

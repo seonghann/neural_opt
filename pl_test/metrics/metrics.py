@@ -5,6 +5,8 @@ import torch.nn as nn
 import numpy as np
 import wandb
 
+torch.set_printoptions(linewidth=200, edgeitems=1e10, precision=4, sci_mode=False)
+
 
 class LossFunction(nn.Module):
     def __init__(self, lambda_x, lambda_q, name='train'):
@@ -69,6 +71,7 @@ class TrainMetrics(nn.Module):
     ):
         self.rmsd_metrics(pred_x, target_x, node2graph)
         self.norm_metrics(pred_q, target_q, edge2graph)
+
         if log:
             to_log = {}
             for metric in [self.rmsd_metrics, self.norm_metrics]:
@@ -98,7 +101,7 @@ class ValidMetrics(nn.Module):
         self.name = name
         self.rmsd_metrics = MetricRMSD()
         self.norm_metrics = MetricNorm()
-        self.proj_metrics = MetricProj()
+        # self.proj_metrics = MetricProj()
         self.loss_x = SquareLoss("euclidean")
         self.loss_q = SquareLoss("riemannian")
         self.lambda_x = lambda_x
@@ -124,10 +127,13 @@ class ValidMetrics(nn.Module):
         self.rmsd_metrics(pred_x, target_x, node2graph)
         self.norm_metrics(pred_q, target_q, edge2graph)
         # TODO : Jacobian product should be done with bmm style
-        J = self.manifold.jacobian_q(edge_index, atom_type, pos)
-        J_inv = torch.linalg.pinv(J, rtol=1e-4, atol=self.manifold.svd_tol)
-        proj_q = J @ J_inv @ pred_q
-        self.proj_metrics(proj_q, pred_q, target_q, edge2graph)
+        print(f"Warning: J is calculated with jacobian_q !")
+        # J = self.manifold.jacobian_q(edge_index, atom_type, pos)
+        # if self.q_type == "DM":
+        #     J = self.manifold.jacobian_d(edge_index, atom_type, pos)
+        # J_inv = torch.linalg.pinv(J, rtol=1e-4, atol=self.manifold.svd_tol)
+        # proj_q = J @ J_inv @ pred_q
+        # self.proj_metrics(proj_q, pred_q, target_q, edge2graph)
         loss_x = self.loss_x(pred_x, target_x, node2graph)
         loss_q = self.loss_q(pred_q, target_q, edge2graph)
         # loss = loss_q + self._lambda * loss_x
@@ -135,14 +141,16 @@ class ValidMetrics(nn.Module):
         loss = loss_x * self.lambda_x + loss_q * self.lambda_q
         if log:
             to_log = {f"{self.name}/loss": loss.item()}
-            for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+            # for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+            for metric in [self.rmsd_metrics, self.norm_metrics]:
                 for k, v in metric.compute().items():
                     to_log[f'{self.name}/{k}'] = v
             if wandb.run:
                 wandb.log(to_log)
 
     def reset(self):
-        for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+        # for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+        for metric in [self.rmsd_metrics, self.norm_metrics]:
             metric.reset()
 
     def log_epoch_metrics(self,):
@@ -152,7 +160,8 @@ class ValidMetrics(nn.Module):
         # loss = loss_x + self._lambda * loss_q
         loss = loss_x * self.lambda_x + loss_q * self.lambda_q
         to_log = {f"{self.name}_epoch/loss": loss}
-        for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+        # for metric in [self.rmsd_metrics, self.norm_metrics, self.proj_metrics]:
+        for metric in [self.rmsd_metrics, self.norm_metrics]:
             for k, v in metric.compute().items():
                 to_log[f'{self.name}_epoch/{k}'] = v
         if wandb.run:
@@ -345,6 +354,13 @@ class MetricNorm(Metric):
         denom = torch.sqrt(scatter_sum(target ** 2, merge))
         perr = norm_err / denom
         pred_size = torch.sqrt(scatter_sum(pred ** 2, merge))
+        print(f"Debug: MetricNorm.update ======================================")
+        # print(f"Debug: pred=\n{pred.detach()}")
+        # print(f"Debug: target=\n{target.detach()}")
+        print(f"Debug: norm_err={norm_err.detach()}")
+        print(f"Debug: denom={denom.detach()}")
+        print(f"Debug: perr={norm_err / denom}")
+        print(f"Debug: MetricNorm.update ======================================")
 
         self.total_norm += norm_err.sum()
         self.total_perr_norm += perr.sum()
