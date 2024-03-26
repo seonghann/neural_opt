@@ -85,9 +85,10 @@ class BellCurveNoiseScheduler(AbstractNoiseScheduler):
         return sigma
 
     def get_sigma_hat(self, t):
-        sigma_sq = self.get_sigma(t)
-        sigma_hat_sq = sigma_sq.clamp(min=self.sigma_min)
-        return sigma_hat_sq
+        sigma_t = self.get_sigma(t)
+        snr = self.get_SNR(t)
+        sigma_hat = sigma_t * (1 - snr)
+        return sigma_hat
 
     def get_SNR(self, t):
         """

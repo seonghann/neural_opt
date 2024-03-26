@@ -95,7 +95,8 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.pred_type == "edge":
             pred_q = self.forward(noisy_rxn_graph)
             dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-            pred_q = dq_dd * pred_q
+            if self.q_type == "morse":
+                pred_q = dq_dd * pred_q
             if self.projection:
                 pred_q = self.geodesic_solver.batch_projection(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="manifold")
             pred_x = self.geodesic_solver.batch_dq2dx(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1, 3)
@@ -407,7 +408,8 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.pred_type == "edge":
             pred_q = self.forward(noisy_rxn_graph)
             dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-            pred_q = dq_dd * pred_q
+            if self.q_type == "morse":
+                pred_q = dq_dd * pred_q
             if self.projection:
                 pred_q = self.geodesic_solver.batch_projection(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="manifold")
             pred_x = self.geodesic_solver.batch_dq2dx(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1, 3)
@@ -505,7 +507,8 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.pred_type == "edge":
             pred_q = self.forward(noisy_rxn_graph)
             dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-            pred_q = dq_dd * pred_q
+            if self.q_type == "morse":
+                pred_q = dq_dd * pred_q
             if self.projection:
                 pred_q = self.geodesic_solver.batch_projection(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="manifold")
             pred_x = self.geodesic_solver.batch_dq2dx(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1, 3)
@@ -583,7 +586,8 @@ class BridgeDiffusion(pl.LightningModule):
                 score = self.geodesic_solver.batch_dx2dq(score, pos, rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
             elif self.pred_type == "edge":
                 dq_dd = self.geodesic_solver.dq_dd(pos, dynamic_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-                score = dq_dd * score
+                if self.q_type == "morse":
+                    score = dq_dd * score
                 if self.projection:
                     score = self.geodesic_solver.batch_projection(score, pos, dynamic_rxn_graph.atom_type, full_edge, dynamic_rxn_graph.batch, dynamic_rxn_graph.num_nodes, q_type=self.q_type, proj_type="manifold")
 
