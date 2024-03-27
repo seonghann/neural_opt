@@ -99,6 +99,7 @@ class GeodesicSolver(object):
     def __init__(self, config,):
         self.alpha = config.ode_solver.get("alpha", 1.6)
         self.beta = config.ode_solver.get("beta", 2.3)
+        self.gamma = config.ode_solver.get("gamma", 0.0)
         self.svd_tol = config.ode_solver.get("svd_tol", 1e-3)
         self.atomic_radius = torch.Tensor(ATOMIC_RADII_LIST)
 
@@ -142,7 +143,7 @@ class GeodesicSolver(object):
         """
         d_ij = self.compute_d(edge_index, pos)
         d_e_ij = self.compute_de(edge_index, atom_type)
-        q_ij = torch.exp(- self.alpha * (d_ij - d_e_ij) / d_e_ij) + self.beta * (d_e_ij / d_ij)
+        q_ij = torch.exp(- self.alpha * (d_ij - d_e_ij) / d_e_ij) + self.beta * (d_e_ij / d_ij) + self.gamma * (d_ij / d_e_ij)
         return q_ij
 
     def jacobian_d(self, edge_index, pos):
@@ -234,7 +235,7 @@ class GeodesicSolver(object):
 
         d_ij = self.compute_d(edge_index, pos)
         d_e_ij = self.compute_de(edge_index, atom_type)
-        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2
+        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij
         K2 = (self.alpha / d_e_ij) ** 2 * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) + 2 * self.beta * d_e_ij / d_ij ** 3
 
         hessian_q = K1.reshape(-1, 1, 1) * hessian_d + K2.reshape(-1, 1, 1) * jacobian_d.unsqueeze(1) * jacobian_d.unsqueeze(2)
@@ -294,7 +295,7 @@ class GeodesicSolver(object):
         # dq_ij/dd_ij = - alpha / d_e_ij * exp(- alpha / d_e_ij * (d_ij - d_e_ij)) - beta * d_e_ij / d_ij ** 2
 
         # debug] print all variables and check their type and shape
-        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij
 
         dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
 
@@ -359,7 +360,7 @@ class GeodesicSolver(object):
         d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
 
         dd_dx = (_pos[_i] - _pos[_j]) / d_ij[:, None]  # (E, 3)
-        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2  # (E, )
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij  # (E, )
 
         dq_dx = dq_dd.unsqueeze(-1) * dd_dx  # (E, 3)
 
@@ -440,7 +441,7 @@ class GeodesicSolver(object):
         jacob_d_i = d_pos / d_ij[:, None]  # (E, 3)
         # jacob_d_j = jacob_d_i
 
-        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2  # (E, )
+        K1 = - (self.alpha / d_e_ij) * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij  # (E, )
         K2 = (self.alpha / d_e_ij) ** 2 * torch.exp(-self.alpha * (d_ij - d_e_ij) / d_e_ij) + 2 * self.beta * d_e_ij / d_ij ** 3  # (E, )
 
         hess_q_ij = K1.reshape(-1, 1, 1) * hess_d_ij + K2.reshape(-1, 1, 1) * jacob_d_i.unsqueeze(1) * (- jacob_d_i).unsqueeze(2)  # (E, 3, 3)
@@ -488,7 +489,7 @@ class GeodesicSolver(object):
         i, j = edge_index
         d_ij = self.compute_d(edge_index, pos)
         d_e_ij = self.compute_de(edge_index, atom_type)
-        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2
+        dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij
         return dq_dd
 
     def batch_compute_q(self, index_tensor, atom_type, x):
