@@ -759,6 +759,8 @@ class LEFTNet(torch.nn.Module):
         z_emb: Tensor,
         pos: Tensor,
         pos_T: Tensor,
+        dist: Tensor,
+        dist_T: Tensor,
         edge_index: Tensor,
         edge_attr: Optional[Tensor] = None,
         # Deprecated by Seonghwan
@@ -793,7 +795,8 @@ class LEFTNet(torch.nn.Module):
         pos_frame = remove_mean_batch(pos_frame, node_mask_w_cutoff.long())
 
         # bulid edge-wise frame and scalarization vector features for edge update
-        dist, coord_diff, coord_cross, coord_vertical = self.scalarization(
+        # dist, coord_diff, coord_cross, coord_vertical = self.scalarization(
+        _, coord_diff, coord_cross, coord_vertical = self.scalarization(
             pos_frame, edge_index
         )
 

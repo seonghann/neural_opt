@@ -33,15 +33,15 @@ class BridgeDiffusion(pl.LightningModule):
         # config.general.name  +  dd-mm-yy:hh-mm-ss
         self.name = config.general.name + time.strftime(":%d-%m-%y:%H-%M-%S")
 
+        self.geodesic_solver = GeodesicSolver(config.manifold)
         if config.model.name == "equivariant":
-            self.NeuralNet = EquivariantEncoderEpsNetwork(config.model)
+            self.NeuralNet = EquivariantEncoderEpsNetwork(config.model, self.geodesic_solver)
         elif config.model.name == "condensed":
-            self.NeuralNet = CondensedEncoderEpsNetwork(config.model)
+            self.NeuralNet = CondensedEncoderEpsNetwork(config.model, self.geodesic_solver)
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
         self.rxn_graph = RxnGraph
         self.dynamic_rxn_graph = DynamicRxnGraph
-        self.geodesic_solver = GeodesicSolver(config.manifold)
 
         self.train_loss = LossFunction(lambda_x=config.train.lambda_x_train, lambda_q=config.train.lambda_q_train, name='train')
         self.train_metrics = TrainMetrics(name='train')  # TODO: define metrics
@@ -132,7 +132,7 @@ class BridgeDiffusion(pl.LightningModule):
         return {"loss": loss}
 
     def noise_level_sampling(self, data):
-        g_length = data.geodesic_length[:, 1:]  # (G, T-1)
+        g_length = data.geodesic_length[:, 1: -1]  # (G, T-1)
         g_last_length = data.geodesic_length[:, -1:]
         SNR_ratio = g_length / g_last_length  # (G, T-1) SNR_ratio = SNR(1)/SNR(t)
         t = self.noise_schedule.get_time_from_SNRratio(SNR_ratio)  # (G, T-1)

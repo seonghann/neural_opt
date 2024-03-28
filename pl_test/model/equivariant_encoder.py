@@ -52,9 +52,10 @@ class AtomEncoder(nn.Module):
 
 
 class EquivariantEncoderEpsNetwork(nn.Module):
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, solver):
         super().__init__()
         self.config = config  # model config
+        self.solver = solver
         """
         edge_encoder:  Takes both edge type and edge length as input and outputs a vector
         [Note]: node embedding is done in SchNetEncoder
@@ -126,8 +127,14 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         edge_index, edge_type_r, edge_type_p = rxn_graph.full_edge()
         pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
 
-        edge_length = get_distance(pos, edge_index).unsqueeze(-1)
-        edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)
+        atom_type = rxn_graph.atom_type
+        length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
+        edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
+        edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
+        edge_length = edge_length / length_e
+        edge_length_T = edge_length_T / length_e
+        # edge_length = get_distance(pos, edge_index).unsqueeze(-1)
+        # edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)
 
         if emb_type == "bond_wo_d":
             edge_attr_r = _enc.bond_emb(edge_type_r)
@@ -142,7 +149,19 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         else:
             raise ValueError
 
-        return edge_attr
+        q1 = torch.exp(- self.solver.alpha * (edge_length - 1))
+        q2 = self.solver.beta / edge_length
+        q3 = self.solver.gamma * edge_length
+        q = torch.cat([q1, q2, q3], dim=-1)
+
+        q1 = torch.exp(- self.solver.alpha * (edge_length_T - 1))
+        q2 = self.solver.beta / edge_length_T
+        q3 = self.solver.gamma * edge_length_T
+        q_T = torch.cat([q1, q2, q3], dim=-1)
+
+        edge_attr = torch.cat([edge_attr, q, q_T], dim=-1)
+
+        return edge_attr, edge_length, edge_length_T
 
     def forward(
         self,
@@ -165,7 +184,7 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         pos = rxn_graph.pos
         pos_T = rxn_graph.pos_init
         edge_index = rxn_graph.full_edge()[0]
-        edge_attr = self.bond_embedding(rxn_graph)
+        edge_attr, dist, dist_T = self.bond_embedding(rxn_graph)
 
-        pred = self.encoder(h_t, z_t, pos, pos_T, edge_index, edge_attr)  # (n_atoms, 3)
+        pred = self.encoder(h_t, z_t, pos, pos_T, dist, dist_T, edge_index, edge_attr)  # (n_atoms, 3)
         return pred

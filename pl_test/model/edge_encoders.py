@@ -54,7 +54,8 @@ class MLPEdgeEncoder(EdgeEncoder):
             2 * self.hidden_dim, [self.hidden_dim], activation=activation
         )
         self.attr_cat = MultiLayerPerceptron(
-            2 * self.hidden_dim, [self.hidden_dim, self.hidden_dim], activation=activation
+            # 2 * self.hidden_dim, [self.hidden_dim, self.hidden_dim], activation=activation
+            2 * self.hidden_dim, [self.hidden_dim, self.hidden_dim - 6], activation=activation
         )
 
     def bond_emb(self, edge_type):
@@ -73,7 +74,7 @@ class MLPEdgeEncoder(EdgeEncoder):
         return attr
 
 
-class GaussianSmearingEdgeEncoder(EdgeEncoder):
+class GaussianEdgeEncoder(EdgeEncoder):
     def __init__(self, hidden_dim=100, cutoff=15.0, bond_dim=10, activation="relu"):
         super().__init__(hidden_dim=hidden_dim, bond_dim=bond_dim, activation=activation)
 
@@ -87,6 +88,10 @@ class GaussianSmearingEdgeEncoder(EdgeEncoder):
         self.dist_cat = MultiLayerPerceptron(
             2 * self.hidden_dim, [self.hidden_dim], activation=self.activation
         )
+        self.attr_cat = MultiLayerPerceptron(
+            # 2 * self.hidden_dim, [self.hidden_dim, self.hidden_dim], activation=activation
+            2 * self.hidden_dim, [self.hidden_dim, self.hidden_dim - 6], activation=activation
+        )
 
     def dist_emb(self, edge_length_t, edge_length_T):
         dist_emb1 = self.dist_func1(edge_length_t)  # (num_edge, hidden_dim)
@@ -97,3 +102,8 @@ class GaussianSmearingEdgeEncoder(EdgeEncoder):
     def bond_emb(self, edge_type):
         bond_emb = self.bond_func(edge_type)
         return bond_emb
+
+    def cat_fn(self, attr_r, attr_p):
+        attr = torch.cat([attr_r, attr_p], dim=-1)
+        attr = self.attr_cat(attr)
+        return attr
