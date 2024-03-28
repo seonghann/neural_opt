@@ -5,6 +5,7 @@ from torch_geometric.utils import to_dense_adj
 import numpy as np
 
 from utils.chem import BOND_TYPES_DECODER, BOND_TYPES_ENCODER
+from utils.rxn_graph import RxnGraph
 from model.utils import load_activation
 from model.layers import MultiLayerPerceptron, assemble_atom_pair_feature
 from model.utils import load_edge_encoder, load_encoder, get_distance
@@ -45,17 +46,28 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
     def condensed_edge_embedding(
         self,
-        edge_length,
-        edge_length_T,
-        edge_type_r,
-        edge_type_p,
-        edge_attr=None,
+        rxn_graph: RxnGraph,
+        edge_index: torch.Tensor,
+        edge_type_r: torch.Tensor,
+        edge_type_p: torch.Tensor,
         emb_type="bond_w_d"
     ):
 
         assert emb_type in ["bond_w_d", "bond_wo_d", "add_d"]
         _enc = self.edge_encoder
         _cat_fn = self.edge_encoder.cat_fn
+
+        _enc = self.edge_encoder
+        _cat_fn = self.edge_encoder.cat_fn
+
+        pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
+
+        atom_type = rxn_graph.atom_type
+        length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
+        edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
+        edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
+        edge_length = edge_length / length_e
+        edge_length_T = edge_length_T / length_e
 
         if emb_type == "bond_wo_d":
             edge_attr_r = _enc.bond_emb(edge_type_r)
@@ -82,7 +94,7 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
         edge_attr = torch.cat([edge_attr, q, q_T], dim=-1)
 
-        return edge_attr
+        return edge_attr, edge_length, edge_length_T
 
     def graph_encoding(self, rxn_graph, tt, pos, pos_T, **kwargs):
         """
@@ -92,9 +104,6 @@ class CondensedEncoderEpsNetwork(nn.Module):
             pos: structure of noisy structure (N, 3)
             pos_T: structure of initial structure (at time = 1) (N, 3)
         """
-        # for p in self.named_parameters():
-        #     print(p)
-
         batch = rxn_graph.batch  # batch: batch index (N, )
         tt_node = tt.index_select(0, batch).unsqueeze(-1)  # Convert tt (G, ) to (N, 1)
 
@@ -114,17 +123,11 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
         # 2) edge_embedding
         edge_index = rxn_graph.current_edge_index
-        atom_type = rxn_graph.atom_type
-        length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
-        edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
-        edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
-        edge_length = edge_length / length_e
-        edge_length_T = edge_length_T / length_e
         # edge_length = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
         # edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)  # (E, 1)
-        edge_attr = self.condensed_edge_embedding(
-            edge_length,
-            edge_length_T,
+        edge_attr, edge_length, edge_length_T = self.condensed_edge_embedding(
+            rxn_graph,
+            edge_index,
             rxn_graph.current_edge_feat_r,
             rxn_graph.current_edge_feat_p
         )
@@ -144,9 +147,7 @@ class CondensedEncoderEpsNetwork(nn.Module):
         node = self.graph_encoding(rxn_graph, tt, pos, pos_T, **kwargs)
 
         edge_index, type_r, type_p = rxn_graph.full_edge()
-        length = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
-        length_T = get_distance(pos_T, edge_index).unsqueeze(-1)  # (E, 1)
-        edge = self.condensed_edge_embedding(length, length_T, type_r, type_p)
+        edge, _, _ = self.condensed_edge_embedding(rxn_graph, edge_index, type_r, type_p)
         h_pair = assemble_atom_pair_feature(node, edge_index, edge)  # (E, 2H)
         pred = self.score_mlp(h_pair)  # (E, 1)
         return pred
