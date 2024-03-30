@@ -780,8 +780,8 @@ class LEFTNet(torch.nn.Module):
         # embed z, assuming last column is atom number
 
         i, j = edge_index  # TODO: full-edge index
-        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-        dist_T = (pos_T[i] - pos_T[j]).pow(2).sum(dim=-1).sqrt()
+        # dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+        # dist_T = (pos_T[i] - pos_T[j]).pow(2).sum(dim=-1).sqrt()
         inner_subgraph_mask = torch.zeros(edge_index.size(1), 1, device=dist.device)
         inner_subgraph_mask[torch.where(dist < self.cutoff)[0]] = 1
 

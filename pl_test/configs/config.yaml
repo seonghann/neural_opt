@@ -3,13 +3,16 @@
 
 train:
   batch_size: 32
-  num_workers: 4
+  num_workers: 8
+  # num_workers: 1
   # lambda_train: 0 # 0.01
   # lambda_valid: 0 # 0.01
   lambda_x_train: 0
-  lambda_q_train: 1
+  lambda_q_train: 0
+  lambda_r_train: 1
   lambda_x_valid: 0
-  lambda_q_valid: 1
+  lambda_q_valid: 0
+  lambda_r_valid: 1
   clip_grad: 5  # float, null to disable
   progress_bar: False
   weight_decay: 1e-12
@@ -23,6 +26,7 @@ train:
   sample_every_n_valid: 30000
 
   projection: True  # True or False
+  # noise_type: euclidean  # euclidean or manifold
   noise_type: manifold  # euclidean or manifold
 
 dataset:
@@ -34,13 +38,13 @@ debug:
   save_dir: './debug'
 
 general:
-  name: 'target(d)_fix(t)_samp(dw_x,dx2dq)'
+  name: 'schnet-test4'
   # name: 'debug'
   use_wandb: True
   wandb: 'online'
   save_model: True
   gpus: 1
-  strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
+  strategy: auto  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume: # ckpt path
   test_only: # /home/ksh/MolDiff/NeuralOpt/neural_opt/pl_test/checkpoints/fourth/epoch=96.ckpt
   evaluate_all_checkpoints:
@@ -54,6 +58,8 @@ sampling:
   time_margin: 0.05
 
 model:
+  append_coordinate: False  # True or False
+  reduced_dimension: False # True or False
   name: condensed
   pred_type: edge  # edge or node
   hidden_dim: 128
@@ -63,7 +69,8 @@ model:
   score_act: 'silu'
   edge_cat_act: 'silu'
   edge_encoder:
-    name: 'mlp'
+    name: 'gaussian'
+    cutoff: 10
     activation: 'silu'
   graph_encoder:
     name: 'schnet'
@@ -76,10 +83,9 @@ model:
     smooth_conv: False
 
 diffusion:
-  noise_type: manifold  # pos
   scheduler:
     name: 'bellcurve'
-    sigma_min: 1e-07
+    sigma_min: 2e-06
     sigma_max: 0.001
     beta_std: 0.125
 
@@ -88,7 +94,7 @@ manifold:
     vpae_thresh: 0.03  # percent error threshold
     alpha: 1.6
     beta: 2.3
-    svd_tol: 1e-6
+    svd_tol: 1e-4
     iter: 30
     max_iter: 1000
     ref_dt: 5e-2
@@ -99,4 +105,4 @@ manifold:
     _min_dt: 1e-4
     pos_adjust_scaler: 0.03
     pos_adjust_thresh: 3e-3
-    q_type: morse
+    q_type: DM

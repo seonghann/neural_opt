@@ -49,14 +49,16 @@ def load_edge_encoder(config):
         return MLPEdgeEncoder(
             hidden_dim=config.hidden_dim,
             activation=config.edge_encoder.activation,
-            bond_dim=config.num_bond_type
+            bond_dim=config.num_bond_type,
+            append_coordinate=config.append_coordinate
         )
     if config.edge_encoder.name == "gaussian":
         from model.edge_encoders import GaussianEdgeEncoder
         return GaussianEdgeEncoder(
             hidden_dim=config.hidden_dim,
             cutoff=config.edge_encoder.cutoff,
-            bond_dim=config.num_bond_type
+            bond_dim=config.num_bond_type,
+            append_coordinate=config.append_coordinate
         )
     else:
         raise ValueError("Unknown edge encoder: {}".format(config["edge_encoder"]["name"]))

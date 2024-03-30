@@ -62,12 +62,16 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
         pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
 
-        atom_type = rxn_graph.atom_type
-        length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
-        edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
-        edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
-        edge_length = edge_length / length_e
-        edge_length_T = edge_length_T / length_e
+        if self.config.reduced_dimension:
+            atom_type = rxn_graph.atom_type
+            length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
+            edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
+            edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
+            edge_length = edge_length / length_e
+            edge_length_T = edge_length_T / length_e
+        else:
+            edge_length = get_distance(pos, edge_index).unsqueeze(-1)
+            edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)
 
         if emb_type == "bond_wo_d":
             edge_attr_r = _enc.bond_emb(edge_type_r)
@@ -82,17 +86,18 @@ class CondensedEncoderEpsNetwork(nn.Module):
         elif emb_type == "add_d":
             edge_attr = _enc.mlp(edge_length, edge_length_T) * edge_attr
 
-        q1 = torch.exp(- self.solver.alpha * (edge_length - 1))
-        q2 = self.solver.beta / edge_length
-        q3 = self.solver.gamma * edge_length
-        q = torch.cat([q1, q2, q3], dim=-1)
+        if self.config.append_coordinate:
+            q1 = torch.exp(- self.solver.alpha * (edge_length - 1))
+            q2 = self.solver.beta / edge_length
+            q3 = self.solver.gamma * edge_length
+            q = torch.cat([q1, q2, q3], dim=-1)
 
-        q1 = torch.exp(- self.solver.alpha * (edge_length_T - 1))
-        q2 = self.solver.beta / edge_length_T
-        q3 = self.solver.gamma * edge_length_T
-        q_T = torch.cat([q1, q2, q3], dim=-1)
+            q1 = torch.exp(- self.solver.alpha * (edge_length_T - 1))
+            q2 = self.solver.beta / edge_length_T
+            q3 = self.solver.gamma * edge_length_T
+            q_T = torch.cat([q1, q2, q3], dim=-1)
 
-        edge_attr = torch.cat([edge_attr, q, q_T], dim=-1)
+            edge_attr = torch.cat([edge_attr, q, q_T], dim=-1)
 
         return edge_attr, edge_length, edge_length_T
 
