@@ -66,7 +66,7 @@ class BridgeDiffusion(pl.LightningModule):
         self.test_counter = 0
 
     def forward(self, noisy_rxn_graph):
-        print(f"Debug: self.optim.lr = {self.optim.param_groups[0]['lr']}")
+        # print(f"Debug: self.optim.lr = {self.optim.param_groups[0]['lr']}")
         return self.NeuralNet(noisy_rxn_graph).squeeze()
 
     def training_step(self, data, i):
@@ -576,7 +576,7 @@ class BridgeDiffusion(pl.LightningModule):
         node2graph = batch.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
         num_nodes = batch.batch.bincount()
-        t = torch.ones_like(full_edge[0])
+        t = torch.ones_like(full_edge[0]) - self.config.sampling.time_margin
         dt = t * self.config.sampling.sde_dt
 
         while (t > 1e-6).any():
@@ -670,6 +670,8 @@ class BridgeDiffusion(pl.LightningModule):
 
                 ban_index = _stats["ban_index"].sort().values
                 ban_index = retry_index[ban_index]
+            else:
+                ban_index = torch.LongTensor([])
 
             if len(ban_index) > 0:
                 rxn_idx = batch.rxn_idx[ban_index]
@@ -692,10 +694,12 @@ class BridgeDiffusion(pl.LightningModule):
         return samples
 
     def get_h_transform(self, pos, pos_init, t, edge_index, atom_type):
-        if self.q_type == "DM"
+        if self.q_type == "DM":
             diff = self.geodesic_solver.compute_d(edge_index, pos_init) - self.geodesic_solver.compute_q(edge_index, pos)
-        elif self.q_type == "morse"
+        elif self.q_type == "morse":
             diff = self.geodesic_solver.compute_q(edge_index, atom_type, pos_init) - self.geodesic_solver.compute_q(edge_index, atom_type, pos)
+        else:
+            raise NotImplementedError
 
         coeff = self.noise_schedule.get_sigma(torch.ones_like(t)) - self.noise_schedule.get_sigma(t)
         beta = self.noise_schedule.get_beta(t)
