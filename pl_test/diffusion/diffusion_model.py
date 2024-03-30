@@ -575,7 +575,7 @@ class BridgeDiffusion(pl.LightningModule):
         full_edge, _, _ = dynamic_rxn_graph.full_edge(upper_triangle=True)
         node2graph = batch.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
-        num_nodes = batch.ptr[1:] - batch.ptr[:-1]
+        num_nodes = batch.batch.bincount()
         t = torch.ones_like(full_edge[0])
         dt = t * self.config.sampling.sde_dt
 
@@ -589,7 +589,7 @@ class BridgeDiffusion(pl.LightningModule):
                 if self.q_type == "morse":
                     score = dq_dd * score
                 if self.projection:
-                    score = self.geodesic_solver.batch_projection(score, pos, dynamic_rxn_graph.atom_type, full_edge, dynamic_rxn_graph.batch, dynamic_rxn_graph.num_nodes, q_type=self.q_type, proj_type="manifold")
+                    score = self.geodesic_solver.batch_projection(score, pos, dynamic_rxn_graph.atom_type, full_edge, dynamic_rxn_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
 
             # TEST
             sigma_hat = self.noise_schedule.get_sigma_hat(t)
@@ -692,7 +692,11 @@ class BridgeDiffusion(pl.LightningModule):
         return samples
 
     def get_h_transform(self, pos, pos_init, t, edge_index, atom_type):
-        diff = self.geodesic_solver.compute_q(edge_index, atom_type, pos_init, q_type=self.q_type) - self.geodesic_solver.compute_q(edge_index, atom_type, pos, q_type=self.q_type)
+        if self.q_type == "DM"
+            diff = self.geodesic_solver.compute_d(edge_index, pos_init) - self.geodesic_solver.compute_q(edge_index, pos)
+        elif self.q_type == "morse"
+            diff = self.geodesic_solver.compute_q(edge_index, atom_type, pos_init) - self.geodesic_solver.compute_q(edge_index, atom_type, pos)
+
         coeff = self.noise_schedule.get_sigma(torch.ones_like(t)) - self.noise_schedule.get_sigma(t)
         beta = self.noise_schedule.get_beta(t)
         coeff = torch.exp(torch.log(beta) - torch.log(coeff))

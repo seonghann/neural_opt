@@ -86,6 +86,7 @@ class NeighborEmb(MessagePassing):
         return s
 
     def message(self, x_j, norm):
+        print(norm.shape, x_j.shape)
         return norm.view(-1, self.hid_dim) * x_j
 
 
@@ -782,6 +783,8 @@ class LEFTNet(torch.nn.Module):
         i, j = edge_index  # TODO: full-edge index
         # dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
         # dist_T = (pos_T[i] - pos_T[j]).pow(2).sum(dim=-1).sqrt()
+        dist = dist.squeeze()
+        dist_T = dist_T.squeeze()
         inner_subgraph_mask = torch.zeros(edge_index.size(1), 1, device=dist.device)
         inner_subgraph_mask[torch.where(dist < self.cutoff)[0]] = 1
 
@@ -833,6 +836,8 @@ class LEFTNet(torch.nn.Module):
 
         f = rbounds.unsqueeze(-1) * f
         f_T = rbounds.unsqueeze(-1) * f_T
+        # f = rbounds * f
+        # f_T = rbounds * f_T
 
         f = torch.cat((f, f_T), dim=-1)
         # f is distance embedding, shape: (n_edge, 196)

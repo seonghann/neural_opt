@@ -134,6 +134,7 @@ class EquivariantEncoderEpsNetwork(nn.Module):
             edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
             edge_length = edge_length / length_e
             edge_length_T = edge_length_T / length_e
+
         else:
             edge_length = get_distance(pos, edge_index).unsqueeze(-1)
             edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)
