@@ -185,7 +185,8 @@ class SamplingMetrics(nn.Module):
             x_true = sample.pos[:, 0]
             num_atoms = x_gen.size(0)
             atom_type = sample.x
-            edge_index = torch.LongTensor(np.triu_indices(num_atoms, k=1)) # full_edges
+            # edge_index = torch.LongTensor(np.triu_indices(num_atoms, k=1)) # full_edges
+            edge_index = torch.LongTensor(np.triu_indices(num_atoms, k=1)).to(sample.pos.device) # full_edges
             q_gen = self.manifold.compute_q(edge_index, atom_type, x_gen)
             q_true = self.manifold.compute_q(edge_index, atom_type, x_true)
             d_gen = self.manifold.compute_d(edge_index, x_gen)
@@ -248,6 +249,7 @@ class SquareLoss(Metric):
         elif self.name == "riemannian":
             square_err = (pred - target) ** 2
         square_err = scatter_sum(square_err, merge)
+        # square_err = square_err.sqrt(); print(f"Debug: Using Norm error!!!! not norm square")
 
         state = self.__getstate__()
         state[f"total_square_err_{self.name}"] += square_err.sum()

@@ -294,6 +294,7 @@ class DynamicRxnGraph(RxnGraph):
         )
         return graph
 
+    # def update_graph(self, pos, score=None, t=None):  # batch argument is deprecated.
     def update_graph(self, pos, batch, score=None, t=None):
         self.update(pos, self.pos_init)
         self.pos_traj.append(pos.to("cpu"))

@@ -36,6 +36,7 @@ dataset:
 
 debug:
   save_dir: './debug'
+  save_dynamic:
 
 general:
   name: 'schnet-test4'

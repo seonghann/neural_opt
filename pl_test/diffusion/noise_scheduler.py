@@ -116,10 +116,45 @@ class BellCurveNoiseScheduler(AbstractNoiseScheduler):
 
 
 if __name__ == "__main__":
-    torch.set_default_dtype(torch.float64)
-    scheduler = BellCurveNoiseScheduler()
-    t = torch.linspace(0, 1, 1001)
-    SNR = scheduler.get_SNR(t)
-    t_inv = scheduler.get_time_from_SNRratio(SNR)
-    diff = (t_inv - t)
-    print(diff.max())
+    sigma_min = 2e-06
+    sigma_max = 0.001
+    beta_std = 0.125
+    time_margin = 0.05
+    dt = 0.05
+    # dt = 0.01
+
+    scheduler = BellCurveNoiseScheduler(
+        sigma_min=sigma_min,
+        sigma_max=sigma_max,
+        beta_std=beta_std,
+    )
+
+    t = torch.arange(0, 1 - time_margin + 1e-10, dt)
+    print(f"dt = {dt}")
+    print(f"len(t) = {len(t)}")
+
+    SNRTt = scheduler.get_SNR(t)
+    betas = scheduler.get_beta(t)
+    sigma_hat = scheduler.get_sigma_hat(t)
+    sigma_square = scheduler.get_sigma(t)
+
+    # t_inv = scheduler.get_time_from_SNRratio(SNR)
+    # diff = (t_inv - t)
+    # print(diff.max())
+
+    import matplotlib.pyplot as plt
+    fig, axs = plt.subplots(1, 7, figsize=(20, 2))
+    plt.subplots_adjust(hspace=0.5)
+    plt.rcParams.update({'font.size': 10})  # Set the global font size to 12
+    axs = axs.flatten()
+
+    ax = axs[0];ax.plot(t, betas);ax.set_title(r"$\beta_t = g^2(t)$")
+    ax = axs[1];ax.plot(t, sigma_square);ax.set_title("$\sigma_{t}^{2}$")
+    ax = axs[2];ax.plot(t, SNRTt);ax.set_title(r"$\frac{SNR_{T}}{SNR_{t}}=\sigma_t^2/\sigma_T^2$")
+    ax = axs[3];ax.set_title(r"$(\hat{\sigma}_t^2)^{-1}=\frac{1}{\sigma_t^2(1-\sigma_t^2/\sigma_T^2)}$");ax.plot(t, (1 / sigma_square / (1 - SNRTt)))
+    ax = axs[4];ax.set_title(r"$\beta_t/\hat{\sigma}_{t}^2 dt=\frac{\beta_t}{\sigma_t^2(1-\sigma_t^2/\sigma_T^2)} dt$");ax.plot(t, (betas / sigma_square / (1 - SNRTt)) * 1 / len(betas))
+    ax.axvline(0.9)
+    ax = axs[5];ax.set_title(r"$\beta_t/\hat{\sigma}_{t}^2=\frac{\beta_t}{\sigma_t^2(1-\sigma_t^2/\sigma_T^2)}$");ax.plot(t, (betas / sigma_square / (1 - SNRTt)))
+    ax = axs[6];ax.set_title(r"$(\hat{\sigma}_t^2)={\sigma_t^2(1-\sigma_t^2/\sigma_T^2)}$");ax.plot(t, (1 * sigma_square * (1 - SNRTt)))
+    plt.tight_layout()
+    plt.show()

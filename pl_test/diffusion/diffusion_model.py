@@ -40,8 +40,7 @@ class BridgeDiffusion(pl.LightningModule):
             self.NeuralNet = CondensedEncoderEpsNetwork(config.model, self.geodesic_solver)
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
-        self.rxn_graph = RxnGraph
-        self.dynamic_rxn_graph = DynamicRxnGraph
+        self.dynamic_rxn_graph = []
 
         self.train_loss = LossFunction(lambda_x=config.train.lambda_x_train, lambda_q=config.train.lambda_q_train, name='train')
         self.train_metrics = TrainMetrics(name='train')  # TODO: define metrics
@@ -79,7 +78,7 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.config.train.noise_type == "euclidean":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
 
-        noisy_rxn_graph = self.dynamic_rxn_graph.from_graph(rxn_graph, pos, pos_init, tt)
+        noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
 
         full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
         node2graph = noisy_rxn_graph.batch
@@ -150,7 +149,7 @@ class BridgeDiffusion(pl.LightningModule):
         return index, t, sampled_SNR_ratio
 
     def apply_noise(self, data):
-        graph = self.rxn_graph.from_batch(data)
+        graph = RxnGraph.from_batch(data)
         full_edge, _, _ = graph.full_edge(upper_triangle=True)
 
         node2graph = graph.batch
@@ -286,7 +285,7 @@ class BridgeDiffusion(pl.LightningModule):
             ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)
 
             data = Batch.from_data_list(data[~ban_batch_mask])
-            graph = self.rxn_graph.from_batch(data)
+            graph = RxnGraph.from_batch(data)
 
             pos_noise = pos_noise[~ban_node_mask]
             x_dot = x_dot[~ban_node_mask]
@@ -298,7 +297,7 @@ class BridgeDiffusion(pl.LightningModule):
         return graph, pos_noise, pos_init, tt, target_x, target_q
 
     def apply_noise_pos(self, data):
-        graph = self.rxn_graph.from_batch(data)
+        graph = RxnGraph.from_batch(data)
         full_edge, _, _ = graph.full_edge(upper_triangle=True)
 
         node2graph = graph.batch
@@ -392,7 +391,7 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.config.train.noise_type == "euclidean":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
 
-        noisy_rxn_graph = self.dynamic_rxn_graph.from_graph(rxn_graph, pos, pos_init, tt)
+        noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
 
         full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
         node2graph = noisy_rxn_graph.batch
@@ -491,7 +490,7 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.config.train.noise_type == "euclidean":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
 
-        noisy_rxn_graph = self.dynamic_rxn_graph.from_graph(rxn_graph, pos, pos_init, tt)
+        noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
 
         full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
         node2graph = noisy_rxn_graph.batch
@@ -563,14 +562,19 @@ class BridgeDiffusion(pl.LightningModule):
             self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
         print("Test epoch end ends...")
 
+
+        ## Save dynamic_rxn_graph object
+        if self.config.debug.save_dynamic:
+            torch.save(self.dynamic_rxn_graph, self.config.debug.save_dynamic)
+        return
+
     @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
-        rxn_graph = self.rxn_graph.from_batch(batch)
+        rxn_graph = RxnGraph.from_batch(batch)
         pos = batch.pos[:, -1, :]
         pos_init = batch.pos[:, -1, :]
         t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin # (G, )
-        dynamic_rxn_graph = self.dynamic_rxn_graph.from_graph(rxn_graph, pos, pos_init, t)
-        # dynamic_rxn_graph = dynamic_rxn_graph.to(pos.device)
+        dynamic_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, t)
 
         full_edge, _, _ = dynamic_rxn_graph.full_edge(upper_triangle=True)
         node2graph = batch.batch
@@ -591,12 +595,29 @@ class BridgeDiffusion(pl.LightningModule):
                 if self.projection:
                     score = self.geodesic_solver.batch_projection(score, pos, dynamic_rxn_graph.atom_type, full_edge, dynamic_rxn_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
 
+
+            ##########################################################
+            ## DEBUG: Using straight line score
+            # print(f"Debug: using straight line score !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            # score = self.geodesic_solver.batch_dx2dq(
+            #     batch.pos[:, 0, :] - pos,
+            #     pos,
+            #     rxn_graph.atom_type,
+            #     full_edge,
+            #     node2graph,
+            #     num_nodes,
+            #     q_type=self.q_type,
+            # ).reshape(-1)
+            # score = 0.05 * score
+            ##########################################################
+
             # TEST
             sigma_hat = self.noise_schedule.get_sigma_hat(t)
             beta = self.noise_schedule.get_beta(t)
             coeff = torch.exp(torch.log(beta) - torch.log(sigma_hat))
             score *= coeff
             h = self.get_h_transform(pos, pos_init, t, full_edge, dynamic_rxn_graph.atom_type)
+            # h = 0.0; print(f"Debug: h_transform set to zero.")
             # score and h arleady contains beta
             if stochastic:
                 # debug, check all variables' shape
@@ -638,7 +659,7 @@ class BridgeDiffusion(pl.LightningModule):
                 _batch = torch.arange(len(retry_index), device=pos.device).repeat_interleave(num_nodes[retry_index])
                 _num_nodes = num_nodes[retry_index]
                 _num_edges = _num_nodes * (_num_nodes - 1) // 2
-                _ptr = torch.cat([torch.zeros(1, dtype=torch.long), _num_nodes.cumsum(0)])
+                _ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=_num_nodes.device), _num_nodes.cumsum(0)])
                 _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
 
                 self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(batch)}, Retry...")
@@ -679,9 +700,12 @@ class BridgeDiffusion(pl.LightningModule):
                 ban_node_mask = torch.isin(node2graph, ban_index)
                 pos_tm1[ban_node_mask] = pos[ban_node_mask] + torch.randn_like(pos[ban_node_mask]) * 1e-3
 
+            # dynamic_rxn_graph.update_graph(pos.clone(), batch.batch, score=score.clone(), t=t)
             t = t - dt
             pos = pos_tm1
             dynamic_rxn_graph.update_graph(pos, batch.batch, score=score, t=t)
+
+        # dynamic_rxn_graph.update_graph(pos.clone(), batch.batch.clone(), score=None, t=t)
 
         traj = torch.stack(dynamic_rxn_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
         samples = []
@@ -690,6 +714,10 @@ class BridgeDiffusion(pl.LightningModule):
             traj_i = traj[(batch.batch == i).to("cpu")]
             d.traj = traj_i
             samples.append(d)
+
+        ## Save dynamic_rxn_graph object
+        if self.config.debug.save_dynamic:
+            self.dynamic_rxn_graph.append(dynamic_rxn_graph)
 
         return samples
 
@@ -705,7 +733,8 @@ class BridgeDiffusion(pl.LightningModule):
         beta = self.noise_schedule.get_beta(t)
         coeff = torch.exp(torch.log(beta) - torch.log(coeff))
         h_transform = diff * coeff
-        return h_transform
+        # return h_transform
+        return -h_transform
 
     def on_fit_start(self) -> None:
         self.train_iterations = len(self.trainer.datamodule.train_dataloader())

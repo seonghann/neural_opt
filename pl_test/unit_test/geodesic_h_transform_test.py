@@ -1,6 +1,7 @@
 """
 Geodesic interpolation으로 계산된 q_dot을 geodesic solver로 update했을 때, x_T로 잘 도착하는 지 확인하기 위한 코드.
 """
+import torch
 
 def DMAE(x, y):
     """x : (N, 3)"""
