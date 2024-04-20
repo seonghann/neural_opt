@@ -120,8 +120,8 @@ if __name__ == "__main__":
     sigma_max = 0.001
     beta_std = 0.125
     time_margin = 0.05
-    dt = 0.05
-    # dt = 0.01
+    # dt = 0.05
+    dt = 0.01
 
     scheduler = BellCurveNoiseScheduler(
         sigma_min=sigma_min,

@@ -61,6 +61,7 @@ class GrambowDataset(InMemoryDataset):
             self,
             root,
             raw_datadir,
+            data_split=None,
             transform=None,
             pre_transform=None,
             stage=None,
@@ -73,13 +74,14 @@ class GrambowDataset(InMemoryDataset):
         self.dtype = dtype
         self.seed = seed
         self.raw_datadir = raw_datadir
+        self.data_split = data_split
         super(GrambowDataset, self).__init__(root, transform, pre_transform)
         self.data, self.slices = torch.load(self.processed_paths[self.file_idx])
 
     @property
     def raw_root(self):
-        # return '/home/share/DATA/NeuralOpt/SQM_data/'
-        return './'
+        return '/home/share/DATA/NeuralOpt/SQM_data/'
+        # return './'
 
     @property
     def processed_file_names(self):
@@ -91,11 +93,34 @@ class GrambowDataset(InMemoryDataset):
         random.shuffle(total_index)
 
         if self.file_idx == 0:  # train, 80%
+            # index = total_index[:1]; print("Debug: Training debugging: Training is performed on only single data sample.")
             index = total_index[:int(num_data * 0.8)]
         elif self.file_idx == 1:
             index = total_index[int(num_data * 0.8):int(num_data * 0.9)]
         else:
-            index = total_index[int(num_data * 0.9):]
+            # index = total_index[int(num_data * 0.9):]
+            index = total_index[-50:]; print(f"DEBUG: only 50 samples for test phase")
+        return index
+
+    def split_index_from_pkl(self):
+        import pickle
+
+        # path = "/home/share/DATA/NeuralOpt/data/data_split.pkl"
+        path = self.data_split
+        with open(path, "rb") as f:
+            split_indices = pickle.load(f)
+
+        print(f"Debug: split_index_from_pkl(); path={path} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        if self.file_idx == 0:
+            index = split_indices["train_index"]
+            print(f"Load train_index from {path}. len(train_index)={len(index)}")
+        elif self.file_idx == 1:
+            index = split_indices["valid_index"]
+            print(f"Load valid_index from {path}. len(valid_index)={len(index)}")
+        else:
+            # index = split_indices["test_index"]
+            index = split_indices["test_index"][:50]; print(f"Debug: only 50 samples for test phase")
+            print(f"Load test_index from {path}. len(test_index)={len(index)}")
         return index
 
     def process(self):
@@ -107,7 +132,11 @@ class GrambowDataset(InMemoryDataset):
         xyz_list = glob.glob(data_path)
         print(f"Info] The number of data : {len(xyz_list)}")
 
-        index = self.split_index(len(xyz_list))
+        # index = self.split_index(len(xyz_list))
+        if self.data_split is None:
+            index = self.split_index(len(xyz_list))
+        else:
+            index = self.split_index_from_pkl()
         # make torch geometric data
         data_list = []
         for i, xyz_file in enumerate(xyz_list):
@@ -171,6 +200,8 @@ class GrambowDataModule(AbstractDataModule):
     def __init__(self, config):
         self.datadir = config.dataset.datadir
         self.raw_datadir = config.dataset.raw_datadir
+        self.data_split = config.dataset.data_split
+        self.dtype = torch.float64 if config.dataset.dtype == "float64" else torch.float32
 
         # base_path = pathlib.Path(os.path.realpath(__file__)).parents[1]
         base_path = pathlib.Path(os.path.realpath(__file__)).parents[1]
@@ -179,9 +210,10 @@ class GrambowDataModule(AbstractDataModule):
         print(f"\n\troot_path: {root_path}")
 
         datasets = {
-            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="train"),
-            "val": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="valid"),
-            "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, stage="test")
+            "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="train", dtype=self.dtype),
+            "val": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="valid", dtype=self.dtype),
+            "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="test", dtype=self.dtype)
+            # "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="train", dtype=self.dtype)
         }
         super().__init__(config, datasets)
 

@@ -86,7 +86,7 @@ class NeighborEmb(MessagePassing):
         return s
 
     def message(self, x_j, norm):
-        print(norm.shape, x_j.shape)
+        # print(norm.shape, x_j.shape)
         return norm.view(-1, self.hid_dim) * x_j
 
 
