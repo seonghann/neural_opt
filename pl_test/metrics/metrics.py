@@ -127,7 +127,7 @@ class ValidMetrics(nn.Module):
         self.rmsd_metrics(pred_x, target_x, node2graph)
         self.norm_metrics(pred_q, target_q, edge2graph)
         # TODO : Jacobian product should be done with bmm style
-        print(f"Warning: J is calculated with jacobian_q !")
+        # print(f"Warning: J is calculated with jacobian_q !")
         # J = self.manifold.jacobian_q(edge_index, atom_type, pos)
         # if self.q_type == "DM":
         #     J = self.manifold.jacobian_d(edge_index, atom_type, pos)
