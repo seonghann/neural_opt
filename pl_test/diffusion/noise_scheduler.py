@@ -13,6 +13,10 @@ def load_noise_scheduler(config):
     name = config.scheduler.name.lower()
     if name == "bellcurve":
         scheduler = BellCurveNoiseScheduler(config.scheduler.sigma_min, config.scheduler.sigma_max, config.scheduler.beta_std)
+    elif name == "tsdiff":
+        scheduler = TSDiffNoiseScheduler(config.scheduler.beta_start, config.scheduler.beta_end)
+    elif name == "dsm":
+        scheduler = DSMScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
     else:
         raise ValueError(f"Invalid scheduler name: {name}")
 
@@ -53,6 +57,85 @@ class AbstractNoiseScheduler(metaclass=ABCMeta):
 
     def get_sigma_hat(self, t):
         raise NotImplementedError
+
+    def get_SNR(self, t):
+        raise NotImplementedError
+
+    def get_time_from_SNRratio(self, SNR_ratio):
+        raise NotImplementedError
+
+
+class DSMScheduler(AbstractNoiseScheduler):
+    def __init__(self, sigma_start=1e-4, sigma_end=1e-1, schedule_type="linear"):
+        assert sigma_start < sigma_end
+
+        super().__init__()
+        self.sigma_start = sigma_start
+        self.sigma_end = sigma_end
+        self.schedule_type = schedule_type
+        return
+
+    def get_beta(self, t):
+        raise NotImplementedError
+
+    def get_sigma(self, t):
+        # sigma 
+        if self.schedule_type == "linear":
+            sigma = (self.sigma_end - self.sigma_start) * t + self.sigma_start
+        else:
+            raise NotImplementedError
+        return sigma**2
+        ## sigmas = np.exp(np.linspace(np.log(sigma_start, np.log(sigma_end)), num_noise_level))
+
+    def get_sigma_hat(self, t):
+        return self.get_sigma(t)
+
+    def get_SNR(self, t):
+        raise NotImplementedError
+
+    def get_time_from_SNRratio(self, SNR_ratio):
+        raise NotImplementedError
+
+
+class TSDiffNoiseScheduler(AbstractNoiseScheduler):
+    """Implement noise schedulers used in TSDiff"""
+    def __init__(self, beta_start=1e-7, beta_end=2e-3, schedule_type="sigmoid"):
+        assert beta_start <= beta_end
+
+        super().__init__()
+        self.beta_start = beta_start
+        self.beta_end = beta_end
+        self.schedule_type = schedule_type
+        assert schedule_type in ["sigmoid", "linear", "quad"]
+        return
+
+    def get_beta(self, t):
+        if self.schedule_type == "sigmoid":
+            # Transform ranges. t: [0, 1] -> _t: [-6, 6]
+            t_start, t_end = -6, 6
+            _t = (t_end - t_start) * (t - 0.5)
+            betas = torch.sigmoid(_t) * (self.beta_end - self.beta_start) + self.beta_start
+            return betas
+        else:
+            raise NotImplementedError
+
+    # def get_sigma_sq(self, t):
+    def get_sigma(self, t):
+        # Return sigma square
+        if self.schedule_type == "sigmoid":
+            # Transform ranges. t: [0, 1] -> _t: [-6, 6]
+            t_start, t_end = -6, 6
+            _t = (t_end - t_start) * (t - 0.5)
+
+            retval = torch.log(torch.exp(_t) + 1) - torch.log(torch.exp(torch.full(_t.size(), t_start, device=t.device)) + 1)
+            retval *= (self.beta_end - self.beta_start) / (t_end - t_start)
+            retval += self.beta_start * t
+            return retval
+        else:
+            raise NotImplementedError
+
+    def get_sigma_hat(self, t):
+        return self.get_sigma(t)
 
     def get_SNR(self, t):
         raise NotImplementedError
@@ -106,6 +189,7 @@ class BellCurveNoiseScheduler(AbstractNoiseScheduler):
         Returns:
             t (torch.Tensor): (N, )
         """
+        # NOTE: if SNR_ratio * self.get_sigma(t1)  < self.sigma_min, 'nan' appears.
         denominator = self.beta_std * math.sqrt(2)
         t0 = torch.zeros_like(SNR_ratio)
         t1 = torch.ones_like(SNR_ratio)

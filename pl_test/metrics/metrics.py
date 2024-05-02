@@ -284,6 +284,12 @@ class MetricRMSD(Metric):
         perr = rmsd / denom
         pred_size = torch.sqrt(scatter_mean(torch.sum(pred ** 2, dim=-1), merge))
 
+        print(f"Debug: MetricRMSD.update ======================================")
+        print(f"Debug: rmsd={rmsd.detach()}")
+        print(f"Debug: denom={denom.detach()}")
+        print(f"Debug: perr={perr.detach()}")
+        print(f"Debug: MetricRMSD.update ======================================")
+
         self.total_rmsd += rmsd.sum()
         self.total_perr_rmsd += perr.sum()
         self.total_pred_size_rmsd += pred_size.sum()

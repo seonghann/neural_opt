@@ -64,18 +64,16 @@ class BridgeDiffusion(pl.LightningModule):
         # print(f"Debug: self.optim.lr = {self.optim.param_groups[0]['lr']}")
         return self.NeuralNet(noisy_rxn_graph).squeeze()
 
-    def training_step(self, data, i):
-        print("===================================================")
-        print("===================================================")
-        print("===================================================")
-
+    def prediction(self, data):
         if self.config.train.noise_type == "manifold":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
         elif self.config.train.noise_type == "euclidean":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
         elif self.config.train.noise_type == "straight_to_x0":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_straight_to_x0(data)
-        elif self.config.train.noise_type == "TSDiff_noise":
+        elif self.config.train.noise_type == "TSDiff":
+            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_TSDiff(data)
+        else:
             raise NotImplementedError
 
         noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
@@ -90,7 +88,6 @@ class BridgeDiffusion(pl.LightningModule):
             if self.projection:
                 pred_x = self.geodesic_solver.batch_projection(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="euclidean")
             pred_q = self.geodesic_solver.batch_dx2dq(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
-
         elif self.pred_type == "edge":
             pred_q = self.forward(noisy_rxn_graph)
             dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
@@ -102,10 +99,31 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             raise ValueError(f"pred_type should be 'edge' or 'node', not {self.pred_type}")
 
-        if pred_q.shape != target_q.shape:
-            print(f"pred_q.shape : {pred_q.shape}")
-            print(f"target_q.shape : {target_q.shape}")
-            print(f"noisy_rxn_graph : {noisy_rxn_graph}")
+        # ## sigma scaling
+        # if self.config.train.noise_type in ["manifold", "euclidean", "TSDiff"]:
+        #     ## NOTE: "TSDiff"에서는 sigma_hat == sigma
+        #     sigma_hat2 = self.noise_schedule.get_sigma_hat(tt)  # (G, )
+        #     sigma_hat = sigma_hat2.sqrt()
+        #     sigma_hat_node = sigma_hat.index_select(0, node2graph)  # (N, )
+        #     sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (N, )
+        #     pred_x /= sigma_hat_node
+        #     pred_q /= sigma_hat_edge
+
+        results = (
+            pos,
+            rxn_graph,
+            edge2graph,
+            node2graph,
+            full_edge,
+            pred_x,
+            target_x,
+            pred_q,
+            target_q,
+        )
+        return results
+
+    def training_step(self, data, i):
+        pos, rxn_graph, edge2graph, node2graph, full_edge, pred_x, target_x, pred_q, target_q = self.prediction(data)
 
         loss = self.train_loss(
             pred_x=pred_x,
@@ -115,7 +133,6 @@ class BridgeDiffusion(pl.LightningModule):
             merge_edge=edge2graph,
             merge_node=node2graph,
         )
-
         self.train_metrics(
             pred_x,
             pred_q,
@@ -143,6 +160,38 @@ class BridgeDiffusion(pl.LightningModule):
         print(f"Debug: t={t}")
         sampled_SNR_ratio = SNR_ratio[(torch.arange(SNR_ratio.size(0)).to(index), index)]
         return index, t, sampled_SNR_ratio
+
+    def apply_noise_TSDiff(self, data):
+        """diffusion noise sampling (no bridge). refer to TSDiff"""
+        graph = RxnGraph.from_batch(data)
+        full_edge, _, _ = graph.full_edge(upper_triangle=True)
+        batch_size = len(data.geodesic_length)
+
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, full_edge[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        pos_0 = data.pos[:, 0]
+        device = pos_0.device
+
+        # sampling time step (symmetrically sampling)
+        time_step = torch.rand(size=(batch_size // 2 + 1,), device=device)
+        time_step = torch.cat([time_step, 1 - time_step], dim=0)[:batch_size]
+        print(f"time_step=\n{time_step}")
+        # time_step = torch.rand(size=(batch_size,), device=device)
+
+        ## Make noise
+        sigma2 = self.noise_schedule.get_sigma(time_step)
+        sigma2_node = sigma2.index_select(0, node2graph)
+        eps_node = torch.randn(size=pos_0.size(), device=device)
+        noise = eps_node * sigma2_node.sqrt().unsqueeze(-1)
+
+        pos_noise = pos_0 + noise
+        target_x = -eps_node
+        target_q = self.geodesic_solver.batch_dx2dq(target_x, pos_noise, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+
+        pos_init = data.pos[:, -1]  # deprecated
+        return graph, pos_noise, pos_init, time_step, target_x, target_q
 
     def apply_straight_to_x0(self, data):
         """No noised version. (straight line approximation.)"""
@@ -366,29 +415,16 @@ class BridgeDiffusion(pl.LightningModule):
         mean = data.pos[(torch.arange(len(t_index_node)), t_index_node)]  # (N, 3)
         pos_init = data.pos[:, -1]
 
-        # sigma = SNR_ratio * self.noise_schedule.get_sigma(torch.ones_like(SNR_ratio))
-        # sigma_hat = sigma * (1 - SNR_ratio)  # (G, )
-        # NOTE : The above two is equivalent to
-        sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
+        sigma_hat2 = self.noise_schedule.get_sigma_hat(tt)  # (G, )
+        sigma_hat2_node = sigma_hat2.index_select(0, node2graph)  # (N, )
 
-        sigma_hat_node = sigma_hat.index_select(0, node2graph)  # (N, )
-        # noise = torch.randn(size=(mean.size(),), device=full_edge.device) * sigma_hat_node.sqrt().unsqueeze(-1)  # dq, (E, )
-        noise = torch.randn(size=mean.size(), device=full_edge.device) * sigma_hat_node.sqrt().unsqueeze(-1)  # dq, (E, )
-        # print(f"Debug: mean={mean}")
-        # print(f"Debug: noise={noise}")
-        # print(f"Debug: sigma_hat.sqrt()={sigma_hat.sqrt()}")
-        # print(f"Debug: tt={tt}")
+        eps_node = torch.randn_like(mean)
+        noise = eps_node * sigma_hat2_node.sqrt().unsqueeze(-1)  # dq, (E, )
+
         pos_noise = mean + noise
-
-        # beta = self.noise_schedule.get_beta(tt)
-        # coeff = beta / sigma_hat
-        # coeff = 1 / sigma_hat
-        coeff = torch.ones_like(tt)
-        coeff_node = coeff.index_select(0, node2graph)  # (N, )
-        # target is not exactly the score function.
-        # target = beta * score
-        target_x = - noise * coeff_node.unsqueeze(-1)
-        target_q = self.geodesic_solver.batch_dx2dq(target_x, mean, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+        target_x = -eps_node
+        # target_q = self.geodesic_solver.batch_dx2dq(target_x, mean, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+        target_q = self.geodesic_solver.batch_dx2dq(target_x, pos_noise, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
 
         return graph, pos_noise, pos_init, tt, target_x, target_q
 
@@ -440,37 +476,7 @@ class BridgeDiffusion(pl.LightningModule):
         self.valid_sampling_metrics.reset()
 
     def validation_step(self, data, i):
-
-        if self.config.train.noise_type == "manifold":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
-        elif self.config.train.noise_type == "euclidean":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
-        elif self.config.train.noise_type == "straight_to_x0":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_straight_to_x0(data)
-
-        noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
-
-        full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
-        node2graph = noisy_rxn_graph.batch
-        edge2graph = node2graph.index_select(0, full_edge[0])
-        num_nodes = node2graph.bincount()
-
-        if self.pred_type == "node":
-            pred_x = self.forward(noisy_rxn_graph)
-            if self.projection:
-                pred_x = self.geodesic_solver.batch_projection(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="euclidean")
-            pred_q = self.geodesic_solver.batch_dx2dq(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
-
-        elif self.pred_type == "edge":
-            pred_q = self.forward(noisy_rxn_graph)
-            dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-            if self.q_type == "morse":
-                pred_q = dq_dd * pred_q
-            if self.projection:
-                pred_q = self.geodesic_solver.batch_projection(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="manifold")
-            pred_x = self.geodesic_solver.batch_dq2dx(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1, 3)
-        else:
-            raise ValueError(f"pred_type should be 'edge' or 'node', not {self.pred_type}")
+        pos, rxn_graph, edge2graph, node2graph, full_edge, pred_x, target_x, pred_q, target_q = self.prediction(data)
 
         loss = self.valid_loss(
             pred_x=pred_x,
@@ -541,37 +547,7 @@ class BridgeDiffusion(pl.LightningModule):
             setup_wandb(self.config)
 
     def test_step(self, data, i):
-
-        if self.config.train.noise_type == "manifold":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
-        elif self.config.train.noise_type == "euclidean":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_pos(data)
-        elif self.config.train.noise_type == "straight_to_x0":
-            rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_straight_to_x0(data)
-
-        noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
-
-        full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
-        node2graph = noisy_rxn_graph.batch
-        edge2graph = node2graph.index_select(0, full_edge[0])
-        num_nodes = node2graph.bincount()
-
-        if self.pred_type == "node":
-            pred_x = self.forward(noisy_rxn_graph)
-            if self.projection:
-                pred_x = self.geodesic_solver.batch_projection(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="euclidean")
-            pred_q = self.geodesic_solver.batch_dx2dq(pred_x, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
-
-        elif self.pred_type == "edge":
-            pred_q = self.forward(noisy_rxn_graph)
-            dq_dd = self.geodesic_solver.dq_dd(pos, noisy_rxn_graph.atom_type, full_edge, q_type=self.q_type)
-            if self.q_type == "morse":
-                pred_q = dq_dd * pred_q
-            if self.projection:
-                pred_q = self.geodesic_solver.batch_projection(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type, proj_type="manifold")
-            pred_x = self.geodesic_solver.batch_dq2dx(pred_q, pos, noisy_rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1, 3)
-        else:
-            raise ValueError(f"pred_type should be 'edge' or 'node', not {self.pred_type}")
+        pos, rxn_graph, edge2graph, node2graph, full_edge, pred_x, target_x, pred_q, target_q = self.prediction(data)
 
         loss = self.test_loss(
             pred_x=pred_x,
@@ -595,7 +571,6 @@ class BridgeDiffusion(pl.LightningModule):
             pos=pos,
             log=True
         )
-
         return {'loss': loss}
 
     def on_test_epoch_end(self) -> None:
@@ -688,6 +663,7 @@ class BridgeDiffusion(pl.LightningModule):
 
             # Reference h term (for debugging)
             if pred_type == "h-transform":
+                # Note: h_coeff = beta_t / (sigma_square_T - sigma_square_t)
                 # Note: forward sampling에 대해서, h-transform을 학습시켰기 때문에 t <- 1 - t로 처리함.
                 # Note: beta(t) sampling이 t=0.5에 대해서 대칭적이지 않으면 문제있을 수 있음.
                 h_coeff = self.noise_schedule.get_sigma(torch.ones_like(1-t)) - self.noise_schedule.get_sigma(1-t)
@@ -698,7 +674,10 @@ class BridgeDiffusion(pl.LightningModule):
                 h_ref = self.get_h_transform(pos, batch.pos[:, 0, :], 1-t, full_edge, dynamic_rxn_graph.atom_type); print(f"Debug: h is set to h-transform to x0")
                 if self.projection:
                     h_ref = self.geodesic_solver.batch_projection(h_ref, pos, dynamic_rxn_graph.atom_type, full_edge, dynamic_rxn_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
-                # h_ref = (xt - x0) * h_coeff
+                # Note: h_ref = (xt - x0) * h_coeff
+
+                # h_pred *= h_coeff
+                h_pred *= self.noise_schedule.get_beta(1-t) / (self.noise_schedule.get_sigma(1-t) - self.noise_schedule.get_sigma(torch.zeros_like(t)))  # TEST: TSDiff sampling
             elif pred_type == "CFM":
                 h_coeff = 1.0
                 h_ref = self.geodesic_solver.batch_dx2dq(
@@ -740,8 +719,8 @@ class BridgeDiffusion(pl.LightningModule):
                 # print(f"Debug: h_ref=\n{h_ref / h_coeff}")
                 h_ref += noise_to_ref
 
-            h = h_ref; print(f"h is set to h_ref")
-            # h = h_pred; print(f"h is set to h_pred")
+            # h = h_ref; print(f"h is set to h_ref")
+            h = h_pred; print(f"h is set to h_pred")
             # if (t > 0.8).any():
             #     print(f"h_ref is set to h")
             #     h = h_ref
@@ -753,8 +732,9 @@ class BridgeDiffusion(pl.LightningModule):
 
         if stochastic:
             # dw = torch.sqrt(beta * dt) * torch.randn_like(score)
+            dw = torch.sqrt(beta * dt) * torch.randn_like(h)
             # dt = dt * 100/70; print(f"Debug: dt * 100/70")
-            dw = 0; print(f"Debug: dw is set to 0")
+            # dw = 0; print(f"Debug: dw is set to 0")
             dq = - (score - h) * dt + dw
         else:
             dq = - (0.5 * score - h) * dt

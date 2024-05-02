@@ -150,7 +150,8 @@ class CondensedEncoderEpsNetwork(nn.Module):
         if self.config.append_pos_init:
             tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos_init
         else:
-            tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos; print("pos_T is set to pos (for learning h-transform)")
+            tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos; print("Debug: pos_T is set to pos (for learning h-transform)")
+            tt = torch.zeros_like(tt); print(f"Debug: tt is set to zeros (to remove t-variable from neural networks")
 
         node = self.graph_encoding(rxn_graph, tt, pos, pos_T, **kwargs)
 
