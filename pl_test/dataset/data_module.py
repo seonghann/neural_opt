@@ -17,7 +17,9 @@ class AbstractDataModule(LightningDataset):
         super().__init__(
             train_dataset=datasets["train"],
             val_dataset=datasets["val"],
-            test_dataset=datasets["test"],
+            # test_dataset=datasets["test"],
+            test_dataset=datasets["test"][-50:],
+            # test_dataset=datasets["train"][-50:],
             batch_size=config.train.batch_size,  # if 'debug' not in config.general.name else 2,
             num_workers=config.train.num_workers,
             pin_memory=getattr(config.dataset, 'pin_memory', False),
@@ -93,24 +95,21 @@ class GrambowDataset(InMemoryDataset):
         random.shuffle(total_index)
 
         if self.file_idx == 0:  # train, 80%
-            # index = total_index[:1]; print("Debug: Training debugging: Training is performed on only single data sample.")
             index = total_index[:int(num_data * 0.8)]
         elif self.file_idx == 1:
             index = total_index[int(num_data * 0.8):int(num_data * 0.9)]
         else:
-            # index = total_index[int(num_data * 0.9):]
-            index = total_index[-50:]; print(f"DEBUG: only 50 samples for test phase")
+            index = total_index[int(num_data * 0.9):]
         return index
 
     def split_index_from_pkl(self):
         import pickle
 
-        # path = "/home/share/DATA/NeuralOpt/data/data_split.pkl"
         path = self.data_split
         with open(path, "rb") as f:
             split_indices = pickle.load(f)
 
-        print(f"Debug: split_index_from_pkl(); path={path} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print(f"data_split pickle file path={path}")
         if self.file_idx == 0:
             index = split_indices["train_index"]
             print(f"Load train_index from {path}. len(train_index)={len(index)}")
@@ -118,8 +117,7 @@ class GrambowDataset(InMemoryDataset):
             index = split_indices["valid_index"]
             print(f"Load valid_index from {path}. len(valid_index)={len(index)}")
         else:
-            # index = split_indices["test_index"]
-            index = split_indices["test_index"][:50]; print(f"Debug: only 50 samples for test phase")
+            index = split_indices["test_index"]
             print(f"Load test_index from {path}. len(test_index)={len(index)}")
         return index
 
@@ -213,7 +211,6 @@ class GrambowDataModule(AbstractDataModule):
             "train": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="train", dtype=self.dtype),
             "val": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="valid", dtype=self.dtype),
             "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="test", dtype=self.dtype)
-            # "test": GrambowDataset(root=root_path, raw_datadir=self.raw_datadir, data_split=self.data_split, stage="train", dtype=self.dtype)
         }
         super().__init__(config, datasets)
 

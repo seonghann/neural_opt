@@ -16,7 +16,9 @@ def load_noise_scheduler(config):
     elif name == "tsdiff":
         scheduler = TSDiffNoiseScheduler(config.scheduler.beta_start, config.scheduler.beta_end)
     elif name == "dsm":
-        scheduler = DSMScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
+        scheduler = DSMNoiseScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
+    elif name == "monomial":
+        scheduler = MonomialNoiseScheduler(config.scheduler.sigma_min, config.scheduler.sigma_max, order=config.scheduler.order)
     else:
         raise ValueError(f"Invalid scheduler name: {name}")
 
@@ -46,8 +48,8 @@ def get_discrete_inverse(func, val, n=1000):
 
 
 class AbstractNoiseScheduler(metaclass=ABCMeta):
-    def __init__(self, sigma_min=1e-7):
-        self.sigma_min = sigma_min
+    def __init__(self):
+        return
 
     def get_beta(self, t):
         raise NotImplementedError
@@ -65,7 +67,7 @@ class AbstractNoiseScheduler(metaclass=ABCMeta):
         raise NotImplementedError
 
 
-class DSMScheduler(AbstractNoiseScheduler):
+class DSMNoiseScheduler(AbstractNoiseScheduler):
     def __init__(self, sigma_start=1e-4, sigma_end=1e-1, schedule_type="linear"):
         assert sigma_start < sigma_end
 
@@ -144,12 +146,55 @@ class TSDiffNoiseScheduler(AbstractNoiseScheduler):
         raise NotImplementedError
 
 
+class MonomialNoiseScheduler(AbstractNoiseScheduler):
+    def __init__(
+        self,
+        # sigma_min: float = 1e-6,  # min(start) of sigma square
+        sigma_min: float = 1e-4,  # min(start) of sigma square
+        sigma_max: float = 1e-2,  # max(end) of sigma square
+        order: int = 1,
+    ):
+        super().__init__()
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.order = order
+        return
+
+    def get_beta(self, t):
+        beta = (self.sigma_max - self.sigma_min) * self.order * (t ** (self.order - 1))
+        return beta
+
+    def get_sigma(self, t):
+        # Return sigma square
+        s_sq = (self.sigma_max - self.sigma_min) * (t ** self.order) + self.sigma_min
+        return s_sq
+
+    def get_sigma_hat(self, t):
+        sigma_t = self.get_sigma(t)
+        snr = self.get_SNR(t)
+        sigma_hat = sigma_t * (1 - snr)
+        return sigma_hat
+
+    def get_SNR(self, t):
+        """
+        SNR(t) = 1 / sigma^2(t)
+        return SNR(1)/SNR(t)
+        """
+        SNR = self.get_sigma(t) / self.get_sigma(torch.ones_like(t))
+        return SNR
+
+    def get_time_from_SNRratio(self, SNR_ratio, n=1000):
+        raise NotImplementedError
+
+
 class BellCurveNoiseScheduler(AbstractNoiseScheduler):
     def __init__(self, sigma_min=1e-7, sigma_max=1e-1, beta_std=0.125):
+        super().__init__()
         self.beta_std = beta_std
         self.normalizer = 1 / (beta_std * math.sqrt(2 * math.pi))
+        self.sigma_min = sigma_min
         self.sigma_max = sigma_max
-        super().__init__(sigma_min=sigma_min)
+        return
 
     def get_beta(self, t):
         beta = torch.exp(-((t - 0.5) / self.beta_std) ** 2 / 2)
@@ -203,7 +248,7 @@ if __name__ == "__main__":
     sigma_min = 2e-06
     sigma_max = 0.001
     beta_std = 0.125
-    time_margin = 0.05
+    time_margin = 0.0
     # dt = 0.05
     dt = 0.01
 
@@ -212,6 +257,7 @@ if __name__ == "__main__":
         sigma_max=sigma_max,
         beta_std=beta_std,
     )
+    # scheduler = MonomialNoiseScheduler(sigma_min=1e-4, sigma_max=1e-2, order=1)
 
     t = torch.arange(0, 1 - time_margin + 1e-10, dt)
     print(f"dt = {dt}")

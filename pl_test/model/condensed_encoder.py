@@ -57,10 +57,10 @@ class CondensedEncoderEpsNetwork(nn.Module):
         _enc = self.edge_encoder
         _cat_fn = self.edge_encoder.cat_fn
 
-        _enc = self.edge_encoder
-        _cat_fn = self.edge_encoder.cat_fn
-
         pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
+        if not self.config.append_pos_init:
+            pos_T = torch.zeros_like(pos_T); print(f"Debug: pos_T is set to zeros in condensed_edge_embedding")
+            # pos_T = pos.clone(); print(f"Debug: pos_T is set to zeros in condensed_edge_embedding")
 
         if self.config.reduced_dimension:
             atom_type = rxn_graph.atom_type
@@ -101,13 +101,12 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
         return edge_attr, edge_length, edge_length_T
 
-    def graph_encoding(self, rxn_graph, tt, pos, pos_T, **kwargs):
+    def graph_encoding(self, rxn_graph, tt, pos, **kwargs):
         """
         Args:
             rxn_graph: rxn graph object (atom_type, r_feat, p_feat, edge_type_r, edge_type_p, edge_index)
             t: time parameter 0 <= t <= 1 (float) (G, )
             pos: structure of noisy structure (N, 3)
-            pos_T: structure of initial structure (at time = 1) (N, 3)
         """
         batch = rxn_graph.batch  # batch: batch index (N, )
         tt_node = tt.index_select(0, batch).unsqueeze(-1)  # Convert tt (G, ) to (N, 1)
@@ -147,13 +146,13 @@ class CondensedEncoderEpsNetwork(nn.Module):
         """
         Args: rxn_graph (DynamicRxnGraph): rxn graph object
         """
-        if self.config.append_pos_init:
-            tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos_init
-        else:
-            tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos; print("Debug: pos_T is set to pos (for learning h-transform)")
+        tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos_init
+        # if config.model.append_pos_init is True, pos_T is used in self.condensed_edge_embedding()
+
+        if not self.config.time_embedding:
             tt = torch.zeros_like(tt); print(f"Debug: tt is set to zeros (to remove t-variable from neural networks")
 
-        node = self.graph_encoding(rxn_graph, tt, pos, pos_T, **kwargs)
+        node = self.graph_encoding(rxn_graph, tt, pos, **kwargs)
 
         edge_index, type_r, type_p = rxn_graph.full_edge()
         edge, _, _ = self.condensed_edge_embedding(rxn_graph, edge_index, type_r, type_p)

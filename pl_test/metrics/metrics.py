@@ -288,6 +288,7 @@ class MetricRMSD(Metric):
         print(f"Debug: rmsd={rmsd.detach()}")
         print(f"Debug: denom={denom.detach()}")
         print(f"Debug: perr={perr.detach()}")
+        print(f"Debug: perr.mean()={perr.mean()}")
         print(f"Debug: MetricRMSD.update ======================================")
 
         self.total_rmsd += rmsd.sum()
@@ -368,6 +369,7 @@ class MetricNorm(Metric):
         print(f"Debug: norm_err={norm_err.detach()}")
         print(f"Debug: denom={denom.detach()}")
         print(f"Debug: perr={norm_err / denom}")
+        print(f"Debug: perr.mean()={perr.mean()}")
         print(f"Debug: MetricNorm.update ======================================")
 
         self.total_norm += norm_err.sum()
