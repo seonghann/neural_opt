@@ -9,8 +9,11 @@ from utils.rxn_graph import RxnGraph, DynamicRxnGraph
 from utils.geodesic_solver import GeodesicSolver
 from diffusion.noise_scheduler import load_noise_scheduler
 from metrics.metrics import LossFunction, SamplingMetrics, TrainMetrics, ValidMetrics
+from model_tsdiff.condensed_encoder import CondenseEncoderEpsNetwork as CondensedEncoderEpsNetwork2
+from model import get_optimizer, get_scheduler
 
 from torch_geometric.data import Batch
+import wandb
 
 
 def _masking(num_nodes):
@@ -34,16 +37,27 @@ class BridgeDiffusion(pl.LightningModule):
             self.NeuralNet = EquivariantEncoderEpsNetwork(config.model, self.geodesic_solver)
         elif config.model.name == "condensed":
             self.NeuralNet = CondensedEncoderEpsNetwork(config.model, self.geodesic_solver)
+        elif config.model.name == "condensed2":
+            self.NeuralNet = CondensedEncoderEpsNetwork2(config.model)
+        else:
+            raise NotImplementedError
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
         self.dynamic_rxn_graph = []
 
+        if config.train.lambda_x_train != config.train.lambda_x_valid:
+            print(f"Warning: config.train.lambda_x_train != config.train.lambda_x_valid")
+        if config.train.lambda_q_train != config.train.lambda_q_valid:
+            print(f"Warning: config.train.lambda_q_train != config.train.lambda_q_valid")
+
         self.train_loss = LossFunction(lambda_x=config.train.lambda_x_train, lambda_q=config.train.lambda_q_train, name='train')
-        self.train_metrics = TrainMetrics(name='train')  # TODO: define metrics
         self.valid_loss = LossFunction(lambda_x=config.train.lambda_x_valid, lambda_q=config.train.lambda_q_valid, name='valid')
-        self.valid_metrics = ValidMetrics(self.geodesic_solver, name='valid', lambda_x=config.train.lambda_x_valid, lambda_q=config.train.lambda_q_valid)  # TODO: define metrics
         self.test_loss = LossFunction(lambda_x=config.train.lambda_x_valid, lambda_q=config.train.lambda_q_valid, name='test')
+
+        self.train_metrics = TrainMetrics(name='train')  # TODO: define metrics
+        self.valid_metrics = ValidMetrics(self.geodesic_solver, name='valid', lambda_x=config.train.lambda_x_valid, lambda_q=config.train.lambda_q_valid)  # TODO: define metrics
         self.test_metrics = ValidMetrics(self.geodesic_solver, name='test', lambda_x=config.train.lambda_x_valid, lambda_q=config.train.lambda_q_valid)  # TODO: define metrics
+
         self.valid_sampling_metrics = SamplingMetrics(self.geodesic_solver, name='valid')
         self.test_sampling_metrics = SamplingMetrics(self.geodesic_solver, name='test')
 
@@ -62,7 +76,8 @@ class BridgeDiffusion(pl.LightningModule):
 
     def forward(self, noisy_rxn_graph):
         # print(f"Debug: self.optim.lr = {self.optim.param_groups[0]['lr']}")
-        return self.NeuralNet(noisy_rxn_graph).squeeze()
+        # return self.NeuralNet(noisy_rxn_graph).squeeze()
+        return self.NeuralNet(noisy_rxn_graph, pred_type=self.pred_type).squeeze()
 
     def prediction(self, data):
         if self.config.train.noise_type == "manifold":
@@ -101,16 +116,6 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             raise ValueError(f"pred_type should be 'edge' or 'node', not {self.pred_type}")
 
-        # ## sigma scaling
-        # if self.config.train.noise_type in ["manifold", "euclidean", "TSDiff"]:
-        #     ## NOTE: "TSDiff"에서는 sigma_hat == sigma
-        #     sigma_hat2 = self.noise_schedule.get_sigma_hat(tt)  # (G, )
-        #     sigma_hat = sigma_hat2.sqrt()
-        #     sigma_hat_node = sigma_hat.index_select(0, node2graph)  # (N, )
-        #     sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (N, )
-        #     pred_x /= sigma_hat_node
-        #     pred_q /= sigma_hat_edge
-
         results = (
             pos,
             rxn_graph,
@@ -127,6 +132,8 @@ class BridgeDiffusion(pl.LightningModule):
     def training_step(self, data, i):
         pos, rxn_graph, edge2graph, node2graph, full_edge, pred_x, target_x, pred_q, target_q = self.prediction(data)
 
+        if wandb.run:
+            wandb.log({"train/lr": self.optim.param_groups[0]['lr']})
         loss = self.train_loss(
             pred_x=pred_x,
             pred_q=pred_q,
@@ -209,7 +216,7 @@ class BridgeDiffusion(pl.LightningModule):
         pos_0 = data.pos[:, 0]
 
         ## linear interpolated pos in euclidean
-        print(f"Linear interpolated structures (x_t) are sampled.")
+        print(f"Linear interpolated structures (x_t) are sampled in apply_straight_to_x0().")
         batch_size = len(data.geodesic_length)
         # tt = torch.rand(size=(batch_size,), device=device)
         # margin = 0.1  # t-range: [-0.1, 1.1]
@@ -479,22 +486,9 @@ class BridgeDiffusion(pl.LightningModule):
         return graph, pos_noise, pos_init, tt, target_x, target_q
 
     def configure_optimizers(self):
-        # set optimizer
-        self.optim = torch.optim.AdamW(
-            self.parameters(), lr=self.config.train.lr,
-            amsgrad=True, weight_decay=self.config.train.weight_decay
-        )
-        self.optim_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optim,
-            mode='min',
-            factor=0.7,
-            patience=30,
-            # threshold=0.01,
-            min_lr=1e-5,
-            # min_lr=1e-6,
-            # min_lr=1e-3,
-            # min_lr=1e-4,
-        )
+        ## Set optimizer and scheduler
+        self.optim = get_optimizer(self.config.train.optimizer, self)
+        self.optim_scheduler = get_scheduler(self.config.train.scheduler, self.optim)
         return [self.optim]
 
     def on_train_epoch_start(self) -> None:

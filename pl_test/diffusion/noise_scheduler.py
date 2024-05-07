@@ -19,6 +19,8 @@ def load_noise_scheduler(config):
         scheduler = DSMNoiseScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
     elif name == "monomial":
         scheduler = MonomialNoiseScheduler(config.scheduler.sigma_min, config.scheduler.sigma_max, order=config.scheduler.order)
+    elif name == "none":
+        scheduler = None
     else:
         raise ValueError(f"Invalid scheduler name: {name}")
 

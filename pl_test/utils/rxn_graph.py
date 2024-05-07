@@ -48,7 +48,8 @@ class RxnGraph:
             smarts="",
             order=3,
             cutoff=10.0,
-            init_extend=True,
+            # init_extend=True,
+            init_extend=False,  # NOTE:
     ):
         self.atom_type = atom_type
         self.edge_index = edge_index
