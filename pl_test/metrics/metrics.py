@@ -248,14 +248,21 @@ class SquareLoss(Metric):
             square_err = torch.sum((pred - target) ** 2, dim=-1)
         elif self.name == "riemannian":
             square_err = (pred - target) ** 2
+
+        numel = square_err.numel()
         square_err = scatter_sum(square_err, merge)
+        nbatch = square_err.numel()
         # square_err = square_err.sqrt(); print(f"Debug: Using Norm error!!!! not norm square")
 
         state = self.__getstate__()
         state[f"total_square_err_{self.name}"] += square_err.sum()
-        self.total_samples += square_err.numel()
+
+        # self.total_samples += nbatch
+        self.total_samples += numel
+        return
 
     def compute(self):
+        # mean error per node
         state = self.__getstate__()
         return state[f"total_square_err_{self.name}"] / self.total_samples
 
@@ -285,9 +292,11 @@ class MetricRMSD(Metric):
         pred_size = torch.sqrt(scatter_mean(torch.sum(pred ** 2, dim=-1), merge))
 
         print(f"Debug: MetricRMSD.update ======================================")
-        print(f"Debug: rmsd={rmsd.detach()}")
-        print(f"Debug: denom={denom.detach()}")
-        print(f"Debug: perr={perr.detach()}")
+        # print(f"Debug: rmsd={rmsd.detach()}")
+        # print(f"Debug: denom={denom.detach()}")
+        # print(f"Debug: perr={perr.detach()}")
+        print(f"Debug: rmsd.mean()={rmsd.mean()}")
+        print(f"Debug: denom.mean()={denom.mean()}")
         print(f"Debug: perr.mean()={perr.mean()}")
         print(f"Debug: MetricRMSD.update ======================================")
 
@@ -366,9 +375,11 @@ class MetricNorm(Metric):
         print(f"Debug: MetricNorm.update ======================================")
         # print(f"Debug: pred=\n{pred.detach()}")
         # print(f"Debug: target=\n{target.detach()}")
-        print(f"Debug: norm_err={norm_err.detach()}")
-        print(f"Debug: denom={denom.detach()}")
-        print(f"Debug: perr={norm_err / denom}")
+        # print(f"Debug: norm_err={norm_err.detach()}")
+        # print(f"Debug: denom={denom.detach()}")
+        # print(f"Debug: perr={norm_err / denom}")
+        print(f"Debug: norm_err.mean()={norm_err.mean()}")
+        print(f"Debug: denom.mean()={denom.mean()}")
         print(f"Debug: perr.mean()={perr.mean()}")
         print(f"Debug: MetricNorm.update ======================================")
 

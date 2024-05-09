@@ -10,6 +10,7 @@ from utils.geodesic_solver import GeodesicSolver
 from diffusion.noise_scheduler import load_noise_scheduler
 from metrics.metrics import LossFunction, SamplingMetrics, TrainMetrics, ValidMetrics
 from model_tsdiff.condensed_encoder import CondenseEncoderEpsNetwork as CondensedEncoderEpsNetwork2
+from model_tsdiff.geometry import get_distance, eq_transform
 from model import get_optimizer, get_scheduler
 
 from torch_geometric.data import Batch
@@ -80,6 +81,7 @@ class BridgeDiffusion(pl.LightningModule):
         return self.NeuralNet(noisy_rxn_graph, pred_type=self.pred_type).squeeze()
 
     def prediction(self, data):
+        ## 1. Make noised positions and target values
         if self.config.train.noise_type == "manifold":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
         elif self.config.train.noise_type == "euclidean":
@@ -92,14 +94,15 @@ class BridgeDiffusion(pl.LightningModule):
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_DDBM_h_transform(data)
         else:
             raise NotImplementedError
-
         noisy_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, tt)
+        print(f"Debug: tt={tt}")
 
         full_edge, _, _ = noisy_rxn_graph.full_edge(upper_triangle=True)
         node2graph = noisy_rxn_graph.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
         num_nodes = node2graph.bincount()
 
+        ## 2. Prediction
         if self.pred_type == "node":
             pred_x = self.forward(noisy_rxn_graph)
             if self.projection:
@@ -172,35 +175,54 @@ class BridgeDiffusion(pl.LightningModule):
 
     def apply_noise_TSDiff(self, data):
         """diffusion noise sampling (no bridge). refer to TSDiff"""
+        assert self.noise_schedule.name == "TSDiffNoiseScheduler"
+        assert self.q_type == "DM"
+
         graph = RxnGraph.from_batch(data)
-        full_edge, _, _ = graph.full_edge(upper_triangle=True)
+        ## NOTE: directed edge is used in the original version of TSDiff
+        # full_edge, _, _ = graph.full_edge(upper_triangle=True)
+        full_edge, _, _ = graph.full_edge(upper_triangle=False)
         batch_size = len(data.geodesic_length)
 
         node2graph = graph.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
         num_nodes = data.ptr[1:] - data.ptr[:-1]
 
-        pos_0 = data.pos[:, 0]
-        device = pos_0.device
+        # undirected edge to directed edge
+        edge_index = full_edge
 
-        # sampling time step (symmetrically sampling)
-        time_step = torch.rand(size=(batch_size // 2 + 1,), device=device)
-        time_step = torch.cat([time_step, 1 - time_step], dim=0)[:batch_size]
-        print(f"time_step=\n{time_step}")
-        # time_step = torch.rand(size=(batch_size,), device=device)
+        pos = data.pos[:, 0]
+        device = pos.device
 
-        ## Make noise
-        sigma2 = self.noise_schedule.get_sigma(time_step)
-        sigma2_node = sigma2.index_select(0, node2graph)
-        eps_node = torch.randn(size=pos_0.size(), device=device)
-        noise = eps_node * sigma2_node.sqrt().unsqueeze(-1)
+        sz = batch_size // 2 + 1
+        t0 = self.config.model.t0
+        t1 = self.config.model.t1
+        half_1 = torch.randint(t0, t1, size=(sz,), device=device)
+        half_2 = t0 + t1 - 1 - half_1
+        time_step = torch.cat([half_1, half_2], dim=0)[:batch_size]
+        a = self.noise_schedule.get_alpha(time_step, device=device)
 
-        pos_noise = pos_0 + noise
-        target_x = -eps_node
-        target_q = self.geodesic_solver.batch_dx2dq(target_x, pos_noise, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+        # Perterb pos
+        a_pos = a.index_select(0, node2graph).unsqueeze(-1)
+        pos_noise = torch.randn(size=pos.size(), device=device)
+        pos_perturbed = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
 
-        pos_init = data.pos[:, -1]  # deprecated
-        return graph, pos_noise, pos_init, time_step, target_x, target_q
+        # setup for target
+        # edge2graph = node2graph.index_select(0, edge_index[0])
+        a_edge = a.index_select(0, edge2graph).unsqueeze(-1)
+
+        # compute original and perturbed distances
+        d_gt = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
+        d_perturbed = get_distance(pos_perturbed, edge_index).unsqueeze(-1)
+        edge_length = get_distance(pos_perturbed, edge_index).unsqueeze(-1)
+
+        d_target = (d_gt - d_perturbed) / (1.0 - a_edge).sqrt() * a_edge.sqrt()
+        pos_target = eq_transform(
+            d_target, pos_perturbed, edge_index, edge_length
+        )  # chain rule (re-parametrization, distance to position)
+        d_target = d_target.squeeze(-1)
+
+        return graph, pos_perturbed, None, time_step, pos_target, d_target
 
     def apply_straight_to_x0(self, data):
         """No noised version. (straight line approximation.)"""
@@ -424,7 +446,6 @@ class BridgeDiffusion(pl.LightningModule):
         batch_size = len(data.geodesic_length)
         tt = torch.rand(size=(batch_size,), device=device)
         tt_node = tt.index_select(0, node2graph).unsqueeze(-1)
-        print(f"Debug: tt={tt}")
 
         sigma_hat2 = self.noise_schedule.get_sigma_hat(tt)  # (G, )
         sigma_hat2_node = sigma_hat2.index_select(0, node2graph).unsqueeze(-1)  # (N, )

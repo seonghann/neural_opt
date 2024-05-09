@@ -3,48 +3,13 @@ from torch import nn
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 import numpy as np
 
-# from chem import BOND_TYPES
-from utils.chem import BOND_TYPES_ENCODER  # imported from neuralopt
+from utils.chem import ATOM_ENCODER, BOND_TYPES_ENCODER
 from model_tsdiff import load_encoder, activation_loader
 from model_tsdiff.common import MultiLayerPerceptron, assemble_atom_pair_feature, extend_ts_graph_order_radius
 from model_tsdiff.geometry import get_distance, eq_transform
 from model_tsdiff.edge import *
 
 
-# def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
-#     def sigmoid(x):
-#         return 1 / (np.exp(-x) + 1)
-# 
-#     if beta_schedule == "quad":
-#         betas = (
-#             np.linspace(
-#                 beta_start**0.5,
-#                 beta_end**0.5,
-#                 num_diffusion_timesteps,
-#                 dtype=np.float64,
-#             )
-#             ** 2
-#         )
-#     elif beta_schedule == "linear":
-#         betas = np.linspace(
-#             beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
-#         )
-#     elif beta_schedule == "const":
-#         betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
-#     elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
-#         betas = 1.0 / np.linspace(
-#             num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
-#         )
-#     elif beta_schedule == "sigmoid":
-#         betas = np.linspace(-6, 6, num_diffusion_timesteps)
-#         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
-#     else:
-#         raise NotImplementedError(beta_schedule)
-#     assert betas.shape == (num_diffusion_timesteps,)
-#     return betas
-
-
-# class DualEncoderEpsNetwork(nn.Module):
 class CondenseEncoderEpsNetwork(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -57,6 +22,8 @@ class CondenseEncoderEpsNetwork(nn.Module):
         self.edge_encoder = get_edge_encoder(config)
         assert config.hidden_dim % 2 == 0
         self.atom_embedding = nn.Embedding(100, config.hidden_dim // 2)
+        # feat_dim = len(ATOM_ENCODER)
+        assert config.feat_dim >= sum([len(val) for val in ATOM_ENCODER.values()])
         self.atom_feat_embedding = nn.Linear(
             config.feat_dim, config.hidden_dim // 2, bias=False
         )
@@ -271,12 +238,22 @@ class CondenseEncoderEpsNetwork(nn.Module):
         p_feat = rxn_graph.p_feat
         pos = rxn_graph.pos
         bond_index = rxn_graph.edge_index
-        bond_type = rxn_graph.edge_feat_r * len(BOND_TYPES_ENCODER) + rxn_graph.edge_feat_p
+        # NOTE: directed edge is used in the original version of TSDiff
+        # extend to directed edge
+        bond_index = torch.cat([bond_index, bond_index.flip(0)], dim=1)
+        edge_feat_r = rxn_graph.edge_feat_r
+        edge_feat_p = rxn_graph.edge_feat_p
+        edge_feat_r = torch.cat([edge_feat_r, edge_feat_r], dim=0)
+        edge_feat_p = torch.cat([edge_feat_p, edge_feat_p], dim=0)
+
+        # bond_type = rxn_graph.edge_feat_r * len(BOND_TYPES_ENCODER) + rxn_graph.edge_feat_p
+        bond_type = edge_feat_r * len(BOND_TYPES_ENCODER) + edge_feat_p
         batch = rxn_graph.batch
         time_step = rxn_graph.t
 
-        # full_edge, type_r, type_p = rxn_graph.full_edge(upper_triangle=True)
-        # bond_index = full_edge
+        # convert features to one-hot encoding
+        r_feat = torch.nn.functional.one_hot(r_feat, num_classes=10).reshape(len(r_feat), -1)
+        p_feat = torch.nn.functional.one_hot(p_feat, num_classes=10).reshape(len(p_feat), -1)
 
         out = self.forward_(
             atom_type,
@@ -290,12 +267,12 @@ class CondenseEncoderEpsNetwork(nn.Module):
 
         edge_inv, edge_index, edge_length = out
 
-        if self.config.type == "dsm":
-            node2graph = batch
-            edge2graph = node2graph.index_select(0, edge_index[0])
-            noise_levels = self.sigmas.index_select(0, time_step)  # (G, )
-            sigma_edge = noise_levels.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
-            edge_inv = edge_inv / sigma_edge
+        # if self.config.type == "dsm":
+        #     node2graph = batch
+        #     edge2graph = node2graph.index_select(0, edge_index[0])
+        #     noise_levels = self.sigmas.index_select(0, time_step)  # (G, )
+        #     sigma_edge = noise_levels.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
+        #     edge_inv = edge_inv / sigma_edge
 
         # if return_edges:
         #     return edge_inv, edge_index, edge_length
@@ -313,187 +290,3 @@ class CondenseEncoderEpsNetwork(nn.Module):
             return node_eq
         else:
             raise NotImplementedError
-
-
-#     def get_loss(
-#         self,
-#         atom_type,
-#         r_feat,
-#         p_feat,
-#         pos,
-#         bond_index,
-#         bond_type,
-#         batch,
-#         num_nodes_per_graph,
-#         num_graphs,
-#         anneal_power=2.0,
-#         extend_order=True,
-#         extend_radius=True,
-#     ):
-#         if self.config.type == "dsm":
-#             print(f"Debug: DSM loss is used.")
-#             return self.get_loss_dsm(
-#                 atom_type,
-#                 r_feat,
-#                 p_feat,
-#                 pos,
-#                 bond_index,
-#                 bond_type,
-#                 batch,
-#                 num_nodes_per_graph,
-#                 num_graphs,
-#                 anneal_power=2.0,
-#                 extend_order=True,
-#                 extend_radius=True,
-#             )
-# 
-#         node2graph = batch
-#         dev = pos.device
-#         # set time step and noise level
-#         t0 = self.config.get("t0", 0)
-#         t1 = self.config.get("t1", self.num_timesteps)
-# 
-#         sz = num_graphs // 2 + 1
-#         half_1 = torch.randint(t0, t1, size=(sz,), device=dev)
-#         half_2 = t0 + t1 - 1 - half_1
-#         time_step = torch.cat([half_1, half_2], dim=0)[:num_graphs]
-#         a = self.alphas.index_select(0, time_step)  # (G, )
-# 
-#         # Perterb pos
-#         a_pos = a.index_select(0, node2graph).unsqueeze(-1)  # (N, 1)
-#         pos_noise = torch.randn(size=pos.size(), device=dev)
-#         pos_perturbed = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
-# 
-#         # prediction
-#         edge_inv, edge_index, edge_length = self(
-#             atom_type, r_feat, p_feat, pos_perturbed, bond_index, bond_type,
-#             batch, time_step, return_edges=True, extend_order=extend_order,
-#             extend_radius=extend_radius,
-#         )  # (E, 1)
-#         node_eq = eq_transform(
-#             edge_inv, pos_perturbed, edge_index, edge_length
-#         )  # chain rule (re-parametrization, distance to position)
-# 
-#         # setup for target
-#         edge2graph = node2graph.index_select(0, edge_index[0])
-#         a_edge = a.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
-# 
-#         # compute original and perturbed distances
-#         d_gt = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
-#         d_perturbed = edge_length
-# 
-#         # compute target
-#         d_target = d_gt - d_perturbed  # (E, 1), denoising direction
-#         d_target = d_target / (1.0 - a_edge).sqrt() * a_edge.sqrt()
-#         pos_target = eq_transform(
-#             d_target, pos_perturbed, edge_index, edge_length
-#         )  # chain rule (re-parametrization, distance to position)
-# 
-#         # calc loss
-#         loss = (node_eq - pos_target) ** 2
-#         loss = torch.sum(loss, dim=-1, keepdim=True)
-# 
-#         ##################################################################
-#         ## Debug: 여기서, unscaled loss 및 perr 출력해보기.
-#         from torch_scatter import scatter_mean, scatter_sum
-# 
-#         rmsd = scatter_mean(loss.sum(dim=-1), node2graph).sqrt()
-#         denom = scatter_mean(pos_target.square().sum(dim=-1), node2graph).sqrt()
-#         perr = rmsd / denom
-#         pred_size = scatter_mean(node_eq.square().sum(dim=-1), node2graph).sqrt()
-#         print(f"Debug: MetricRMSD.update ======================================")
-#         print(f"Debug: rmsd={rmsd.detach()}")
-#         print(f"Debug: denom={denom.detach()}")
-#         print(f"Debug: pred_size={pred_size.detach()}")
-#         print(f"Debug: perr={perr.detach()}")
-#         print(f"Debug: MetricRMSD.update ======================================")
-#         ##################################################################
-# 
-#         return loss
-# 
-#     def get_loss_dsm(
-#         self,
-#         atom_type,
-#         r_feat,
-#         p_feat,
-#         pos,
-#         bond_index,
-#         bond_type,
-#         batch,
-#         num_nodes_per_graph,
-#         num_graphs,
-#         anneal_power=2.0,
-#         extend_order=True,
-#         extend_radius=True,
-#     ):
-#         node2graph = batch
-#         dev = pos.device
-#         # set time step and noise level
-#         t0 = self.config.get("t0", 0)
-#         t1 = self.config.get("t1", self.num_timesteps)
-# 
-#         sz = num_graphs // 2 + 1
-#         half_1 = torch.randint(t0, t1, size=(sz,), device=dev)
-#         half_2 = t0 + t1 - 1 - half_1
-#         time_step = torch.cat([half_1, half_2], dim=0)[:num_graphs]
-#         # a = self.alphas.index_select(0, time_step)  # (G, )
-#         noise_levels = self.sigmas.index_select(0, time_step)  # (G, )
-# 
-#         # Perterb pos
-#         # a_pos = a.index_select(0, node2graph).unsqueeze(-1)  # (N, 1)
-#         sigmas_pos = noise_levels.index_select(0, node2graph).unsqueeze(-1)  # (E, 1)
-#         pos_noise = torch.randn(size=pos.size(), device=dev)
-#         # pos_perturbed = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
-#         pos_perturbed = pos + pos_noise * sigmas_pos
-# 
-#         # prediction
-#         edge_inv, edge_index, edge_length = self(
-#             atom_type, r_feat, p_feat, pos_perturbed, bond_index, bond_type,
-#             batch, time_step, return_edges=True, extend_order=extend_order,
-#             extend_radius=extend_radius,
-#         )  # (E, 1)
-#         node_eq = eq_transform(
-#             edge_inv, pos_perturbed, edge_index, edge_length
-#         )  # chain rule (re-parametrization, distance to position)
-# 
-#         # setup for target
-#         edge2graph = node2graph.index_select(0, edge_index[0])
-#         # a_edge = a.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
-#         sigmas_edge = noise_levels.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
-# 
-#         # compute original and perturbed distances
-#         d_gt = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
-#         d_perturbed = edge_length
-# 
-#         # compute target
-#         d_target = d_gt - d_perturbed  # (E, 1), denoising direction
-#         # d_target = d_target / (1.0 - a_edge).sqrt() * a_edge.sqrt()
-#         d_target = d_target / (sigmas_edge ** 2)
-#         pos_target = eq_transform(
-#             d_target, pos_perturbed, edge_index, edge_length
-#         )  # chain rule (re-parametrization, distance to position)
-# 
-#         # calc loss
-#         # loss = (node_eq - pos_target) ** 2
-#         loss = ((node_eq - pos_target)**2) * (sigmas_pos ** anneal_power)
-#         loss = torch.sum(loss, dim=-1, keepdim=True)
-# 
-#         ##################################################################
-#         ## Debug: 여기서, unscaled loss 및 perr 출력해보기.
-#         from torch_scatter import scatter_mean, scatter_sum
-# 
-#         rmsd = scatter_mean(loss.sum(dim=-1), node2graph).sqrt()
-#         pos_target_unscaled = pos_target * (sigmas_pos ** 2)
-#         node_eq_unscaled = node_eq * (sigmas_pos ** 2)
-#         denom = scatter_mean(pos_target_unscaled.square().sum(dim=-1), node2graph).sqrt()
-#         perr = rmsd / denom
-#         pred_size = scatter_mean(node_eq_unscaled.square().sum(dim=-1), node2graph).sqrt()
-#         print(f"Debug: MetricRMSD.update ======================================")
-#         print(f"Debug: rmsd={rmsd.detach()}")
-#         print(f"Debug: denom={denom.detach()}")
-#         print(f"Debug: pred_size={pred_size.detach()}")
-#         print(f"Debug: perr={perr.detach()}")
-#         print(f"Debug: MetricRMSD.update ======================================")
-#         ##################################################################
-# 
-#         return loss

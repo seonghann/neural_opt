@@ -1,6 +1,9 @@
+from typing import List
 from abc import *
-import torch
+
 import math
+import torch
+import numpy as np
 
 
 def load_noise_scheduler(config):
@@ -50,7 +53,8 @@ def get_discrete_inverse(func, val, n=1000):
 
 
 class AbstractNoiseScheduler(metaclass=ABCMeta):
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name
         return
 
     def get_beta(self, t):
@@ -73,7 +77,7 @@ class DSMNoiseScheduler(AbstractNoiseScheduler):
     def __init__(self, sigma_start=1e-4, sigma_end=1e-1, schedule_type="linear"):
         assert sigma_start < sigma_end
 
-        super().__init__()
+        super().__init__(name="DSMNoiseScheduler")
         self.sigma_start = sigma_start
         self.sigma_end = sigma_end
         self.schedule_type = schedule_type
@@ -103,43 +107,68 @@ class DSMNoiseScheduler(AbstractNoiseScheduler):
 
 class TSDiffNoiseScheduler(AbstractNoiseScheduler):
     """Implement noise schedulers used in TSDiff"""
-    def __init__(self, beta_start=1e-7, beta_end=2e-3, schedule_type="sigmoid"):
-        assert beta_start <= beta_end
+    # def __init__(self, beta_start=1e-7, beta_end=2e-3, schedule_type="sigmoid"):
+    def __init__(
+        self,
+        beta_start=1e-7,
+        beta_end=2e-3,
+        num_diffusion_timesteps=5000,
+        schedule_type="sigmoid",
+        ):
+        super().__init__(name="TSDiffNoiseScheduler")
 
-        super().__init__()
+        assert beta_start <= beta_end
         self.beta_start = beta_start
         self.beta_end = beta_end
+        self.num_diffusion_timesteps = num_diffusion_timesteps
         self.schedule_type = schedule_type
-        assert schedule_type in ["sigmoid", "linear", "quad"]
+        self.betas = get_beta_schedule(
+            schedule_type,
+            beta_start=beta_start,
+            beta_end=beta_end,
+            num_diffusion_timesteps=num_diffusion_timesteps,
+        )
+        self.betas = torch.tensor(self.betas, dtype=torch.float)
+        self.alphas = (1 - self.betas).cumprod(dim=0)
+        # self.beta_start = beta_start
+        # self.beta_end = beta_end
+        # self.schedule_type = schedule_type
+        # assert schedule_type in ["sigmoid", "linear", "quad"]
         return
 
+    def get_alpha(self, t: List[int], device="cpu"):
+        return self.alphas.to(device).index_select(0, t)
+
     def get_beta(self, t):
-        if self.schedule_type == "sigmoid":
-            # Transform ranges. t: [0, 1] -> _t: [-6, 6]
-            t_start, t_end = -6, 6
-            _t = (t_end - t_start) * (t - 0.5)
-            betas = torch.sigmoid(_t) * (self.beta_end - self.beta_start) + self.beta_start
-            return betas
-        else:
-            raise NotImplementedError
+        # if self.schedule_type == "sigmoid":
+        #     # Transform ranges. t: [0, 1] -> _t: [-6, 6]
+        #     t_start, t_end = -6, 6
+        #     _t = (t_end - t_start) * (t - 0.5)
+        #     betas = torch.sigmoid(_t) * (self.beta_end - self.beta_start) + self.beta_start
+        #     return betas
+        # else:
+        #     raise NotImplementedError
+        raise NotImplementedError
 
     # def get_sigma_sq(self, t):
     def get_sigma(self, t):
         # Return sigma square
-        if self.schedule_type == "sigmoid":
-            # Transform ranges. t: [0, 1] -> _t: [-6, 6]
-            t_start, t_end = -6, 6
-            _t = (t_end - t_start) * (t - 0.5)
+        # if self.schedule_type == "sigmoid":
+        #     # Transform ranges. t: [0, 1] -> _t: [-6, 6]
+        #     t_start, t_end = -6, 6
+        #     _t = (t_end - t_start) * (t - 0.5)
 
-            retval = torch.log(torch.exp(_t) + 1) - torch.log(torch.exp(torch.full(_t.size(), t_start, device=t.device)) + 1)
-            retval *= (self.beta_end - self.beta_start) / (t_end - t_start)
-            retval += self.beta_start * t
-            return retval
-        else:
-            raise NotImplementedError
+        #     retval = torch.log(torch.exp(_t) + 1) - torch.log(torch.exp(torch.full(_t.size(), t_start, device=t.device)) + 1)
+        #     retval *= (self.beta_end - self.beta_start) / (t_end - t_start)
+        #     retval += self.beta_start * t
+        #     return retval
+        # else:
+        #     raise NotImplementedError
+        raise NotImplementedError
 
     def get_sigma_hat(self, t):
-        return self.get_sigma(t)
+        # return self.get_sigma(t)
+        raise NotImplementedError
 
     def get_SNR(self, t):
         raise NotImplementedError
@@ -156,7 +185,7 @@ class MonomialNoiseScheduler(AbstractNoiseScheduler):
         sigma_max: float = 1e-2,  # max(end) of sigma square
         order: int = 1,
     ):
-        super().__init__()
+        super().__init__(name="MonomialNoiseScheduler")
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.order = order
@@ -191,7 +220,7 @@ class MonomialNoiseScheduler(AbstractNoiseScheduler):
 
 class BellCurveNoiseScheduler(AbstractNoiseScheduler):
     def __init__(self, sigma_min=1e-7, sigma_max=1e-1, beta_std=0.125):
-        super().__init__()
+        super().__init__("BellCurveNoiseScheduler")
         self.beta_std = beta_std
         self.normalizer = 1 / (beta_std * math.sqrt(2 * math.pi))
         self.sigma_min = sigma_min
@@ -246,6 +275,39 @@ class BellCurveNoiseScheduler(AbstractNoiseScheduler):
         return t
 
 
+def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
+    def sigmoid(x):
+        return 1 / (np.exp(-x) + 1)
+
+    if beta_schedule == "quad":
+        betas = (
+            np.linspace(
+                beta_start**0.5,
+                beta_end**0.5,
+                num_diffusion_timesteps,
+                dtype=np.float64,
+            )
+            ** 2
+        )
+    elif beta_schedule == "linear":
+        betas = np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
+    elif beta_schedule == "const":
+        betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
+    elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
+        betas = 1.0 / np.linspace(
+            num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
+        )
+    elif beta_schedule == "sigmoid":
+        betas = np.linspace(-6, 6, num_diffusion_timesteps)
+        betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
+    else:
+        raise NotImplementedError(beta_schedule)
+    assert betas.shape == (num_diffusion_timesteps,)
+    return betas
+
+
 if __name__ == "__main__":
     sigma_min = 2e-06
     sigma_max = 0.001
@@ -260,6 +322,7 @@ if __name__ == "__main__":
         beta_std=beta_std,
     )
     # scheduler = MonomialNoiseScheduler(sigma_min=1e-4, sigma_max=1e-2, order=1)
+    # scheduler = TSDiffNoiseScheduler(beta_start=1e-7, beta_end=2e-3, schedule_type="sigmoid")
 
     t = torch.arange(0, 1 - time_margin + 1e-10, dt)
     print(f"dt = {dt}")
