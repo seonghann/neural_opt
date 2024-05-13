@@ -17,7 +17,7 @@ def load_noise_scheduler(config):
     if name == "bellcurve":
         scheduler = BellCurveNoiseScheduler(config.scheduler.sigma_min, config.scheduler.sigma_max, config.scheduler.beta_std)
     elif name == "tsdiff":
-        scheduler = TSDiffNoiseScheduler(config.scheduler.beta_start, config.scheduler.beta_end)
+        scheduler = TSDiffNoiseScheduler(config.scheduler.beta_start, config.scheduler.beta_end, config.scheduler.num_diffusion_timesteps)
     elif name == "dsm":
         scheduler = DSMNoiseScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
     elif name == "monomial":

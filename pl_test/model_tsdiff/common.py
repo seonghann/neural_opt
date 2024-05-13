@@ -161,7 +161,7 @@ def _extend_ts_graph_order(num_nodes, edge_index, edge_type, batch, order=3):
         return order_mat
 
     # num_types = len(BOND_TYPES)
-    num_types = len(BOND_TYPES_ENCODER); print(f"Debug: num_types(len of BOND_TYPES) is set to {len(BOND_TYPES_ENCODER)}. (in NeuralOPT)")
+    num_types = len(BOND_TYPES_ENCODER)#; print(f"Debug: num_types(len of BOND_TYPES) is set to {len(BOND_TYPES_ENCODER)}. (in NeuralOPT)")
     # num_types = 5; print(f"Debug: num_types(len of BOND_TYPES) is set to 5. (in NeuralOPT)")
     N = num_nodes
 

@@ -1,6 +1,7 @@
 import torch
 import pytorch_lightning as pl
 import time
+from torch_scatter import scatter_mean
 
 from model.condensed_encoder import CondensedEncoderEpsNetwork
 from model.equivariant_encoder import EquivariantEncoderEpsNetwork
@@ -15,6 +16,7 @@ from model import get_optimizer, get_scheduler
 
 from torch_geometric.data import Batch
 import wandb
+from tqdm.auto import tqdm
 
 
 def _masking(num_nodes):
@@ -213,8 +215,9 @@ class BridgeDiffusion(pl.LightningModule):
 
         # compute original and perturbed distances
         d_gt = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
-        d_perturbed = get_distance(pos_perturbed, edge_index).unsqueeze(-1)
+        # d_perturbed = get_distance(pos_perturbed, edge_index).unsqueeze(-1)
         edge_length = get_distance(pos_perturbed, edge_index).unsqueeze(-1)
+        d_perturbed = edge_length
 
         d_target = (d_gt - d_perturbed) / (1.0 - a_edge).sqrt() * a_edge.sqrt()
         pos_target = eq_transform(
@@ -590,7 +593,10 @@ class BridgeDiffusion(pl.LightningModule):
             for i, batch in enumerate(self.trainer.datamodule.val_dataloader()):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
-                    batch_out = self.sample_batch(batch, stochastic=stochastic)
+                    if self.config.sampling.pred_type == "TSDiff":
+                        batch_out = self.sample_batch_TSDiff(batch, stochastic=stochastic)
+                    else:
+                        batch_out = self.sample_batch(batch, stochastic=stochastic)
                     samples.extend(batch_out)
 
             self.valid_sampling_metrics(
@@ -654,7 +660,10 @@ class BridgeDiffusion(pl.LightningModule):
             for i, batch in enumerate(self.trainer.datamodule.test_dataloader()):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
-                    batch_out = self.sample_batch(batch, stochastic=stochastic)
+                    if self.config.sampling.pred_type == "TSDiff":
+                        batch_out = self.sample_batch_TSDiff(batch, stochastic=stochastic)
+                    else:
+                        batch_out = self.sample_batch(batch, stochastic=stochastic)
                     samples.extend(batch_out)
 
             self.test_sampling_metrics(samples, self.name, self.current_epoch, valid_counter=-1, test=True, local_rank=self.local_rank)
@@ -812,6 +821,161 @@ class BridgeDiffusion(pl.LightningModule):
         return dq
 
     @torch.no_grad()
+    def sample_batch_TSDiff(
+        self,
+        batch,
+        stochastic=True,
+        step_lr=0.0000010,
+        clip=1000,
+        clip_pos=None,
+        sampling_type="ld",
+    ):
+        assert stochastic
+        assert self.pred_type == "node"
+
+        def compute_alpha(beta, t):
+            beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
+            a = (1 - beta).cumprod(dim=0).index_select(0, t + 1)  # .view(-1, 1, 1, 1)
+            return a
+
+        rxn_graph = RxnGraph.from_batch(batch)
+        # pos_init = batch.pos[:, -1, :]
+        pos = batch.pos[:, -1, :]
+        pos_init = torch.randn_like(pos)
+        # t = torch.ones(batch.num_graphs, device=pos.device)
+        num_timesteps = self.noise_schedule.num_diffusion_timesteps
+        t = torch.full(
+            size=(batch.num_graphs,),
+            fill_value=num_timesteps,
+            dtype=torch.long,
+            device=pos.device,
+        )
+        dynamic_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, t)
+
+        full_edge, _, _ = dynamic_rxn_graph.full_edge(upper_triangle=False)
+        node2graph = batch.batch
+        edge2graph = node2graph.index_select(0, full_edge[0])
+        num_nodes = batch.batch.bincount()
+        edge_index = full_edge
+
+        alphas = self.noise_schedule.alphas
+        sigmas = (1.0 - alphas).sqrt() / alphas.sqrt()
+
+        seq = range(0, num_timesteps)
+        seq_next = [-1] + list(seq[:-1])
+        pos = pos_init * sigmas[-1]
+
+        for i, j in tqdm(zip(reversed(seq), reversed(seq_next)), desc="sample"):
+            t = torch.full(
+                size=(batch.num_graphs,),
+                fill_value=i,
+                dtype=torch.long,
+                device=pos.device,
+            )
+            print(f"Debug: t={t[0]}")
+            # edge_inv, edge_index, edge_length = self(
+            #     atom_type=atom_type,
+            #     r_feat=r_feat,
+            #     p_feat=p_feat,
+            #     pos=pos,
+            #     bond_index=bond_index,
+            #     bond_type=bond_type,
+            #     batch=batch,
+            #     time_step=t,
+            #     return_edges=True,
+            #     extend_order=extend_order,
+            #     extend_radius=extend_radius,
+            # )  # (E, 1)
+            node_eq = self.forward(dynamic_rxn_graph.to("cuda"))
+
+            #################################################
+            ## Calculate reference score
+            d_gt = get_distance(batch.pos[:, 0, :], edge_index).unsqueeze(-1)
+            edge_length = get_distance(pos, edge_index).unsqueeze(-1)
+            d_perturbed = edge_length
+            d_target = (d_gt - d_perturbed) / sigmas[i]
+            # sigmas_edge = sigmas[i].index_select(0, edge2graph).unsqueeze(-1)
+            # d_target = (d_gt - d_perturbed) / sigmas_edge
+            pos_target = eq_transform(d_target, pos, edge_index, edge_length)
+            rmsd = torch.sqrt(scatter_mean(torch.sum((pos_target - node_eq) ** 2, dim=-1), node2graph))
+            denom = torch.sqrt(scatter_mean(torch.sum(pos_target ** 2, dim=-1), node2graph))
+            perr = rmsd / denom
+            print(f"Debug: rmsd={rmsd.detach()}")
+            print(f"Debug: denom={denom.detach()}")
+            print(f"Debug: perr={perr.detach()}")
+            #################################################
+
+            # if self.pred_type == "node":
+            #     score = self.geodesic_solver.batch_dx2dq(score, pos, rxn_graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+            # else:
+            #     raise NotImplementedError
+            # node_eq = eq_transform(edge_inv, pos, edge_index, edge_length)
+            eps_pos = clip_norm(node_eq, limit=clip)
+
+            # Update
+            # sampling_type = kwargs.get("sampling_type", "ddpm")
+            noise = torch.randn_like(pos)
+
+            if sampling_type == "ddpm":
+                # b = self.betas
+                b = self.noise_schedule.betas
+                t = t[0]
+                next_t = (torch.ones(1) * j).to(pos.device)
+                at = compute_alpha(b, t.long())
+                at_next = compute_alpha(b, next_t.long())
+                atm1 = at_next
+                beta_t = 1 - at / atm1
+                e = -eps_pos
+                pos_C = at.sqrt() * pos
+                pos0_from_e = (1.0 / at).sqrt() * pos_C - (
+                    1.0 / at - 1
+                ).sqrt() * e
+                mean_eps = (
+                    (atm1.sqrt() * beta_t) * pos0_from_e
+                    + ((1 - beta_t).sqrt() * (1 - atm1)) * pos_C
+                ) / (1.0 - at)
+                mean = mean_eps
+                mask = 1 - (t == 0).float()
+                logvar = beta_t.log()
+
+                pos_next = (mean + mask * torch.exp(0.5 * logvar) * noise) / atm1.sqrt()
+
+            elif sampling_type == "ld":
+                step_size = step_lr * (sigmas[i] / 0.01) ** 2
+                pos_next = (
+                    pos
+                    + step_size * eps_pos / sigmas[i]
+                    + noise * torch.sqrt(step_size * 2)
+                )
+
+            pos = pos_next
+
+            dynamic_rxn_graph.update_graph(pos, batch.batch, score=node_eq, t=t)
+
+            if torch.isnan(pos).any():
+                print("NaN detected. Please restart.")
+                raise FloatingPointError()
+            pos = center_pos(pos, batch.batch)
+            if clip_pos is not None:
+                pos = torch.clamp(pos, min=-clip_pos, max=clip_pos)
+            # pos_traj.append(pos.clone().cpu())
+
+
+        ## Save trajectory
+        traj = torch.stack(dynamic_rxn_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
+        samples = []
+        for i in range(batch.num_graphs):
+            d = batch[i]
+            traj_i = traj[(batch.batch == i).to("cpu")]
+            d.traj = traj_i
+            samples.append(d)
+
+        ## Save dynamic_rxn_graph object
+        if self.config.debug.save_dynamic:
+            self.dynamic_rxn_graph.append(dynamic_rxn_graph)
+        return samples
+
+    @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
         rxn_graph = RxnGraph.from_batch(batch)
         pos = batch.pos[:, -1, :]
@@ -830,15 +994,6 @@ class BridgeDiffusion(pl.LightningModule):
             print(f"t={t[0]}")
             dt = dt.clip(max=t)
 
-            if self.config.train.noise_type == "straight_to_x0":
-                pred_type = "CFM"
-            elif self.config.train.noise_type in ["manifold", "euclidean"]:
-                pred_type = "DDBM"
-            elif self.config.train.noise_type == "TSDiff":
-                pred_type = "h-transform"
-            else:
-                raise NotImplementedError
-
             dq = self.predict_dq(
                 batch,
                 dynamic_rxn_graph,
@@ -852,7 +1007,7 @@ class BridgeDiffusion(pl.LightningModule):
                 t,
                 dt,
                 stochastic,
-                pred_type=pred_type,
+                pred_type=self.config.sampling.pred_type,
                 perr=0.0,
             )
 
@@ -978,3 +1133,13 @@ class BridgeDiffusion(pl.LightningModule):
         self.train_metrics.reset()
         if self.local_rank == 0:
             setup_wandb(self.config)
+
+
+def center_pos(pos, batch):
+    pos_center = pos - scatter_mean(pos, batch, dim=0)[batch]
+    return pos_center
+
+def clip_norm(vec, limit, p=2):
+    norm = torch.norm(vec, dim=-1, p=2, keepdim=True)
+    denom = torch.where(norm > limit, limit / norm, torch.ones_like(norm))
+    return vec * denom
