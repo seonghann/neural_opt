@@ -21,9 +21,19 @@ class LossFunction(nn.Module):
         for metric in [self.metric_x, self.metric_q]:
             metric.reset()
 
-    def forward(self, pred_x, pred_q, true_x, true_q, merge_edge, merge_node, log=False):
-        loss_x = self.metric_x(pred_x, true_x, merge_node)
-        loss_q = self.metric_q(pred_q, true_q, merge_edge)
+    def forward(
+        self,
+        pred_x,
+        pred_q,
+        true_x,
+        true_q,
+        merge_edge,
+        merge_node,
+        weight=None,
+        log=False,
+    ):
+        loss_x = self.metric_x(pred_x, true_x, merge_node, weight)
+        loss_q = self.metric_q(pred_q, true_q, merge_edge, weight)
         if log:
             to_log = {}
             to_log[f"{self.name}/loss_x"] = loss_x.item()
@@ -236,13 +246,14 @@ class SquareLoss(Metric):
         self.add_state(f"total_square_err_{name}", default=torch.tensor(0.), dist_reduce_fx="sum")
         self.add_state("total_samples", default=torch.tensor(0.), dist_reduce_fx="sum")
 
-    def update(self, pred, target, merge):
+    def update(self, pred, target, merge, weight=None):
         """
         Update state with predictions and targets.
         Args:
             pred: Predictions from model (n, 3) or (E,)
             target: Ground truth labels (n, 3) or (E,)
             merge: Batch index for each atom (n,) or edge (E,)
+            weight: weight of loss for each time step, \lambda(t)
         """
         if self.name == "euclidean":
             square_err = torch.sum((pred - target) ** 2, dim=-1)
@@ -255,7 +266,11 @@ class SquareLoss(Metric):
         # square_err = square_err.sqrt(); print(f"Debug: Using Norm error!!!! not norm square")
 
         state = self.__getstate__()
-        state[f"total_square_err_{self.name}"] += square_err.sum()
+        if weight is not None:
+            square_err_sum = (square_err * weight).sum()
+        else:
+            square_err_sum = square_err.sum()
+        state[f"total_square_err_{self.name}"] += square_err_sum
 
         # self.total_samples += nbatch
         self.total_samples += numel
