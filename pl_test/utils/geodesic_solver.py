@@ -492,6 +492,15 @@ class GeodesicSolver(object):
         dq_dd = - self.alpha / d_e_ij * torch.exp(- self.alpha / d_e_ij * (d_ij - d_e_ij)) - self.beta * d_e_ij / d_ij ** 2 + self.gamma / d_e_ij
         return dq_dd
 
+    def compute_d_or_q(self, pos, atom_type, edge_index, q_type="morse"):
+        if q_type == "morse":
+            q = self.compute_q(edge_index, atom_type, pos)
+        elif q_type == "DM":
+            q = self.compute_d(edge_index, pos)
+        else:
+            raise NotImplementedError
+        return q
+
     def batch_compute_q(self, index_tensor, atom_type, x):
         B = index_tensor[0].max() + 1
         n = index_tensor[2:].max() + 1
