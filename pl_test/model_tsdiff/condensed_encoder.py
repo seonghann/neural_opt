@@ -279,14 +279,17 @@ class CondenseEncoderEpsNetwork(nn.Module):
         # else:
         #     return edge_inv
 
-        if pred_type == "edge":
-            mask = edge_index[0] < edge_index[1]
-            edge_inv = edge_inv[mask]
-            return edge_inv
-        elif pred_type == "node":
-            node_eq = eq_transform(
-                edge_inv, pos, edge_index, edge_length
-            )  # chain rule (re-parametrization, distance to position)
-            return node_eq
-        else:
-            raise NotImplementedError
+        mask = edge_index[0] < edge_index[1]
+        edge_inv = edge_inv[mask]
+        return edge_inv
+        # if pred_type == "edge":
+        #     mask = edge_index[0] < edge_index[1]
+        #     edge_inv = edge_inv[mask]
+        #     return edge_inv
+        # elif pred_type == "node":
+        #     node_eq = eq_transform(
+        #         edge_inv, pos, edge_index, edge_length
+        #     )  # chain rule (re-parametrization, distance to position)
+        #     return node_eq
+        # else:
+        #     raise NotImplementedError

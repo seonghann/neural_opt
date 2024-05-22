@@ -48,8 +48,8 @@ class RxnGraph:
             smarts="",
             order=3,
             cutoff=10.0,
-            # init_extend=True,
-            init_extend=False,  # NOTE:
+            init_extend=True,
+            # init_extend=False,  # NOTE:
     ):
         self.atom_type = atom_type
         self.edge_index = edge_index
@@ -71,9 +71,9 @@ class RxnGraph:
             self.raw_edge_feat_r = edge_feat_r
             self.raw_edge_feat_p = edge_feat_p
             # make it undirected
-            self.edge_index = torch.cat([self.edge_index, self.edge_index.flip(0)], dim=1)
-            self.edge_feat_r = torch.cat([self.edge_feat_r, self.edge_feat_r], dim=0)
-            self.edge_feat_p = torch.cat([self.edge_feat_p, self.edge_feat_p], dim=0)
+            # self.edge_index = torch.cat([self.edge_index, self.edge_index.flip(0)], dim=1)
+            # self.edge_feat_r = torch.cat([self.edge_feat_r, self.edge_feat_r], dim=0)
+            # self.edge_feat_p = torch.cat([self.edge_feat_p, self.edge_feat_p], dim=0)
 
             edge_index, type_r, type_p = self.extend_graph_order(order=order)
             self.edge_index = edge_index
@@ -191,6 +191,7 @@ class RxnGraph:
         self.current_edge_feat_r = type_r
         self.current_edge_feat_p = type_p
 
+    # NOTE: upper_triangle에 상관없이, 항상 upper_triangle에 대해서만 계산되는 문제 있음. (self.edge_index에 의존하여 만들어지기 때문.)
     def full_edge(self, upper_triangle=True):
         # make fully connected graph
         N = self.num_nodes
