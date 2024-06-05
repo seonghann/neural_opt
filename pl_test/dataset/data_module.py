@@ -146,7 +146,8 @@ class GrambowDataset(InMemoryDataset):
             if rxn_idx not in index:
                 continue
             rxn_smarts = atoms.info["rxn_smarts"]
-
+            if rxn_smarts == "":
+                continue
             # process smarts, extract 2D based information
             atom_type, edge_index, r_edge_type, p_edge_type, r_feat, p_feat = process_smarts(rxn_smarts)
 
