@@ -138,15 +138,15 @@ class GrambowDataset(InMemoryDataset):
         # make torch geometric data
         data_list = []
         for i, xyz_file in enumerate(xyz_list):
-            if i not in index:
-                continue
-
             atoms_list = list(io.iread(xyz_file))
             atoms = atoms_list[0]
 
             # extract info
             rxn_idx = atoms.info["idx"]
+            if rxn_idx not in index:
+                continue
             rxn_smarts = atoms.info["rxn_smarts"]
+
             # process smarts, extract 2D based information
             atom_type, edge_index, r_edge_type, p_edge_type, r_feat, p_feat = process_smarts(rxn_smarts)
 

@@ -272,8 +272,8 @@ class SquareLoss(Metric):
             square_err_sum = square_err.sum()
         state[f"total_square_err_{self.name}"] += square_err_sum
 
-        # self.total_samples += nbatch
-        self.total_samples += numel
+        self.total_samples += nbatch
+        # self.total_samples += numel
         return
 
     def compute(self):
@@ -307,10 +307,12 @@ class MetricRMSD(Metric):
         pred_size = torch.sqrt(scatter_mean(torch.sum(pred ** 2, dim=-1), merge))
 
         print(f"Debug: MetricRMSD.update ======================================")
-        # print(f"Debug: rmsd={rmsd.detach()}")
-        # print(f"Debug: denom={denom.detach()}")
-        # print(f"Debug: perr={perr.detach()}")
+        print(f"Debug: rmsd={rmsd.detach()}")
+        print(f"Debug: pred_size={pred_size.detach()}")
+        print(f"Debug: denom={denom.detach()}")
+        print(f"Debug: perr={perr.detach()}")
         print(f"Debug: rmsd.mean()={rmsd.mean()}")
+        print(f"Debug: pred_size={pred_size.mean()}")
         print(f"Debug: denom.mean()={denom.mean()}")
         print(f"Debug: perr.mean()={perr.mean()}")
         print(f"Debug: MetricRMSD.update ======================================")

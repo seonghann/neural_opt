@@ -55,12 +55,21 @@ if __name__ == '__main__':
             mode='min',
             every_n_epochs=1
         )
+        checkpoint_callback_perr = ModelCheckpoint(
+            dirpath=f"checkpoints/{config.general.name}",
+            filename='{epoch}-{perr:.3f}',
+            monitor="valid/rmsd_perr",
+            save_top_k=5,
+            mode='min',
+            every_n_epochs=1
+        )
         last_ckpt_save = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
             filename='last',
             every_n_epochs=1,
         )
         callbacks.append(checkpoint_callback)
+        callbacks.append(checkpoint_callback_perr)
         callbacks.append(last_ckpt_save)
 
     trainer = Trainer(

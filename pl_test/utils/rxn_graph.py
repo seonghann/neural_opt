@@ -292,7 +292,8 @@ class DynamicRxnGraph(RxnGraph):
             smarts=smarts,
             order=order,
             cutoff=cutoff,
-            init_extend=False
+            # init_extend=False
+            init_extend=True,
         )
         return graph
 
