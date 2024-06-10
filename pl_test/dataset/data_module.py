@@ -81,11 +81,6 @@ class GrambowDataset(InMemoryDataset):
         self.data, self.slices = torch.load(self.processed_paths[self.file_idx])
 
     @property
-    def raw_root(self):
-        return '/home/share/DATA/NeuralOpt/SQM_data/'
-        # return './'
-
-    @property
     def processed_file_names(self):
         return ['train_proc.pt', 'valid_proc.pt', 'test_proc.pt']
 
@@ -124,13 +119,12 @@ class GrambowDataset(InMemoryDataset):
     def process(self):
         import glob
 
-        data_path = os.path.join(self.raw_root, self.raw_datadir, "*")
+        data_path = os.path.join(self.raw_datadir, "*")
         print(f"Info] (GrambowDataset) \n\tdata_path: {data_path}")
         # read position and atomic number
         xyz_list = glob.glob(data_path)
         print(f"Info] The number of data : {len(xyz_list)}")
 
-        # index = self.split_index(len(xyz_list))
         if self.data_split is None:
             index = self.split_index(len(xyz_list))
         else:
@@ -146,7 +140,8 @@ class GrambowDataset(InMemoryDataset):
             if rxn_idx not in index:
                 continue
             rxn_smarts = atoms.info["rxn_smarts"]
-            if rxn_smarts == "":
+            if not rxn_smarts:
+                # check whether rxn_smarts is empty
                 continue
             # process smarts, extract 2D based information
             atom_type, edge_index, r_edge_type, p_edge_type, r_feat, p_feat = process_smarts(rxn_smarts)

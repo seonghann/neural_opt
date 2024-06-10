@@ -42,6 +42,8 @@ class BridgeDiffusion(pl.LightningModule):
             self.NeuralNet = CondensedEncoderEpsNetwork(config.model, self.geodesic_solver)
         elif config.model.name == "condensed2":
             self.NeuralNet = CondensedEncoderEpsNetwork2(config.model)
+        elif config.model.name == "geodiff":
+            raise NotImplementedError()
         else:
             raise NotImplementedError
 
@@ -117,14 +119,16 @@ class BridgeDiffusion(pl.LightningModule):
 
         if transform_type == "eq_transform":
             assert self.q_type == "DM"
-            assert self.pred_type == "edge"
+            # assert self.pred_type == "edge"
+            assert self.pred_type == "edge" or not self.config.train.transform_at_forward
 
             edge_length = get_distance(pos, edge_index).unsqueeze(-1)
             score_q = score_q.unsqueeze(-1)
             score_x = eq_transform(score_q, pos, edge_index, edge_length)
             score_q = score_q.squeeze(-1)
         elif transform_type == "projection_dq2dx":
-            assert self.pred_type == "edge"
+            # assert self.pred_type == "edge"
+            assert self.pred_type == "edge" or not self.config.train.transform_at_forward
 
             score_q = self.geodesic_solver.batch_projection(
                 score_q,
@@ -217,10 +221,10 @@ class BridgeDiffusion(pl.LightningModule):
         ## 2. Prediction
         if self.pred_type == "node":
             pred_x = self.NeuralNet(rxn_graph).squeeze()
-            pred_q = None
+            pred_q = torch.zeros(*edge2graph.shape, dtype=pred_x.dtype, device=pred_x.device)
         elif self.pred_type == "edge":
-            pred_x = None
             pred_q = self.NeuralNet(rxn_graph).squeeze()
+            pred_x = torch.zeros((len(node2graph), 3), dtype=pred_q.dtype, device=pred_q.device)
 
             if self.q_type == "morse":
                 dq_dd = self.geodesic_solver.dq_dd(
@@ -233,16 +237,17 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             raise ValueError(f"pred_type should be 'edge' or 'node', not {self.pred_type}")
 
-        pred_x, pred_q = self.transform(
-            pred_x,
-            pred_q,
-            rxn_graph.pos,
-            rxn_graph.atom_type,
-            edge_index,
-            node2graph,
-            num_nodes,
-            self.q_type,
-        )
+        if self.config.train.transform_at_forward:
+            pred_x, pred_q = self.transform(
+                pred_x,
+                pred_q,
+                rxn_graph.pos,
+                rxn_graph.atom_type,
+                edge_index,
+                node2graph,
+                num_nodes,
+                self.q_type,
+            )
         return pred_x, pred_q, edge_index, node2graph, edge2graph
 
     def get_loss_weight(
@@ -267,13 +272,9 @@ class BridgeDiffusion(pl.LightningModule):
         rxn_graph, target_x, target_q = self.noise_sampling(data)
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(rxn_graph)
 
-        # if i == 0:
-        #     self.configure_optimizers()
-        #     print(f"Debug: i=0, configure_optimizers !!!!!!!!!")
-        #     print(f"Debug: self.optim={self.optim}")
-
         if wandb.run:
             wandb.log({"train/lr": self.optim.param_groups[0]['lr']})
+
         loss = self.train_loss(
             pred_x=pred_x,
             pred_q=pred_q,
@@ -325,6 +326,7 @@ class BridgeDiffusion(pl.LightningModule):
         num_nodes = data.ptr[1:] - data.ptr[:-1]
 
         pos = data.pos[:, 0]
+        pos = center_pos(pos, data.batch)
         device = pos.device
 
         t0 = self.config.diffusion.scheduler.t0
@@ -333,12 +335,7 @@ class BridgeDiffusion(pl.LightningModule):
         # half_1 = torch.randint(t0, t1, size=(sz,), device=device)
         # half_2 = t0 + t1 - 1 - half_1
         # time_step = torch.cat([half_1, half_2], dim=0)[:batch_size]
-
         time_step = torch.randint(t0, t1, size=(batch_size,), device=device); print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-        # time_step = torch.randint(0, 1000, size=(batch_size,), device=device); print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-        # time_step = torch.randint(0, 2000, size=(batch_size,), device=device); print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-        # time_step = torch.randint(0, 5000, size=(batch_size,), device=device); print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-
         time_step = time_step.sort()[0]
         a = self.noise_schedule.get_alpha(time_step, device=device)
 
@@ -346,6 +343,8 @@ class BridgeDiffusion(pl.LightningModule):
         a_pos = a.index_select(0, node2graph).unsqueeze(-1)
         pos_noise = torch.randn(size=pos.size(), device=device)
         pos_t = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
+        # pos_t = align(pos_t, pos)
+        pos_t = center_pos(pos_t, data.batch)
 
         a_edge = a.index_select(0, edge2graph)
 
@@ -788,7 +787,11 @@ class BridgeDiffusion(pl.LightningModule):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
                     if self.config.sampling.score_type == "tsdiff":
-                        batch_out = self.sample_batch_tsdiff(batch, stochastic=stochastic)
+                        batch_out = self.sample_batch_tsdiff(
+                            batch,
+                            stochastic=stochastic,
+                            start_from_time=self.config.sampling.start_from_time,
+                        )
                     else:
                         batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
@@ -858,7 +861,11 @@ class BridgeDiffusion(pl.LightningModule):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
                     if self.config.sampling.score_type == "tsdiff":
-                        batch_out = self.sample_batch_tsdiff(batch, stochastic=stochastic)
+                        batch_out = self.sample_batch_tsdiff(
+                            batch,
+                            stochastic=stochastic,
+                            start_from_time=self.config.sampling.start_from_time,
+                        )
                     else:
                         batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
@@ -983,10 +990,13 @@ class BridgeDiffusion(pl.LightningModule):
             edge_index, _, _ = rxn_graph.full_edge(upper_triangle=True)
             node2graph = batch.batch
             num_nodes = node2graph.bincount()
+            pos_0 = center_pos(pos_0, batch.batch)
+            pos_t = center_pos(pos_t, batch.batch)
 
             q_gt = self.geodesic_solver.compute_d_or_q(pos_0, rxn_graph.atom_type, edge_index, q_type=self.q_type)
             q_t = self.geodesic_solver.compute_d_or_q(pos_t, rxn_graph.atom_type, edge_index, q_type=self.q_type)
-            score_ref, _ = self.transform(None, (q_gt - q_t), pos_t, rxn_graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type)
+            # score_ref, _ = self.transform(None, (q_gt - q_t), pos_t, rxn_graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type)
+            score_ref, _ = self.transform((pos_0 - pos_t), (q_gt - q_t), pos_t, rxn_graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type)
 
             square_err = (score - score_ref).square().sum(dim=-1)
             rmsd = scatter_mean(square_err, node2graph).sqrt()
@@ -1167,6 +1177,7 @@ class BridgeDiffusion(pl.LightningModule):
         clip_pos=None,
         sampling_type="ld",
         debug=False,
+        start_from_time=None,
     ):
         # assert stochastic
         # assert self.pred_type == "node"
@@ -1212,6 +1223,11 @@ class BridgeDiffusion(pl.LightningModule):
         )
         dynamic_rxn_graph = DynamicRxnGraph.from_graph(rxn_graph, pos, pos_init, t)
 
+        if start_from_time is None:
+            start_from_time = num_timesteps
+        else:
+            assert start_from_time <= num_timesteps
+
         edge_index, _, _ = dynamic_rxn_graph.full_edge(upper_triangle=True)
         node2graph = batch.batch
         edge2graph = node2graph.index_select(0, edge_index[0])
@@ -1242,10 +1258,12 @@ class BridgeDiffusion(pl.LightningModule):
                 dtype=torch.long,
                 device=pos.device,
             )
-            print(f"Debug: t={t[0]}")
             # if (t > 1000).any():
             # if (t > 2000).any():
             #     continue
+            if (t > start_from_time).any():
+                continue
+            print(f"Debug: t={t[0]}")
             node_eq = self.forward(dynamic_rxn_graph.to("cuda"))[0]
 
             loss_weight_type = self.config.train.loss_weight
@@ -1362,6 +1380,9 @@ class BridgeDiffusion(pl.LightningModule):
 
         pos = batch.pos[:, -1, :]
         pos_init = batch.pos[:, -1, :]
+        pos = center_pos(pos, batch.batch)
+        pos_init = center_pos(pos_init, batch.batch)
+
         # t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin # (G, )
         t = torch.ones(batch.num_graphs, device=pos.device)
         t -= self.config.sampling.time_margin # (G, )
@@ -1394,6 +1415,8 @@ class BridgeDiffusion(pl.LightningModule):
             )
             pos -= dx
             t -= dt
+
+            pos = center_pos(pos, batch.batch)
 
             dynamic_rxn_graph.update_graph(pos, batch.batch, score=dx, t=t)
 
@@ -1572,9 +1595,13 @@ class BridgeDiffusion(pl.LightningModule):
             setup_wandb(self.config)
 
 
+# def align(pos, pos_ref):
+#     pass
+
 def center_pos(pos, batch):
     pos_center = pos - scatter_mean(pos, batch, dim=0)[batch]
     return pos_center
+
 
 def clip_norm(vec, limit, p=2):
     norm = torch.norm(vec, dim=-1, p=2, keepdim=True)

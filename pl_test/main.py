@@ -47,9 +47,12 @@ if __name__ == '__main__':
 
     callbacks = []
     if config.general.save_model:
+        # You can remove empty directories named by '{epoch}-valid'
+        # $ find . -type d -empty -exec rm -r {} +
         checkpoint_callback = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
-            filename='{epoch}',
+            # filename='{epoch}',
+            filename='{epoch}-{valid/loss:.3f}',
             monitor='valid/loss',
             save_top_k=5,
             mode='min',
@@ -57,7 +60,7 @@ if __name__ == '__main__':
         )
         checkpoint_callback_perr = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
-            filename='{epoch}-{perr:.3f}',
+            filename='{epoch}-{valid/rmsd_perr:.3f}',
             monitor="valid/rmsd_perr",
             save_top_k=5,
             mode='min',
