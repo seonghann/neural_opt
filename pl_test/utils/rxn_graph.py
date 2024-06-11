@@ -64,16 +64,21 @@ class RxnGraph:
         self.num_nodes = self.atom_type.size(0)
 
         self.order = order
-        self.cutoff = 10.0
+        self.cutoff = 10.0  # TODO: FIX:
 
         if init_extend:
+            self.edge_index_raw = self.edge_index.clone()
+            self.edge_feat_r_raw = self.edge_feat_r.clone()
+            self.edge_feat_p_raw = self.edge_feat_p.clone()
+
             self.raw_edge_index = edge_index
             self.raw_edge_feat_r = edge_feat_r
             self.raw_edge_feat_p = edge_feat_p
+
             # make it undirected
-            # self.edge_index = torch.cat([self.edge_index, self.edge_index.flip(0)], dim=1)
-            # self.edge_feat_r = torch.cat([self.edge_feat_r, self.edge_feat_r], dim=0)
-            # self.edge_feat_p = torch.cat([self.edge_feat_p, self.edge_feat_p], dim=0)
+            self.edge_index = torch.cat([self.edge_index, self.edge_index.flip(0)], dim=1)
+            self.edge_feat_r = torch.cat([self.edge_feat_r, self.edge_feat_r], dim=0)
+            self.edge_feat_p = torch.cat([self.edge_feat_p, self.edge_feat_p], dim=0)
 
             edge_index, type_r, type_p = self.extend_graph_order(order=order)
             self.edge_index = edge_index
@@ -292,8 +297,8 @@ class DynamicRxnGraph(RxnGraph):
             smarts=smarts,
             order=order,
             cutoff=cutoff,
-            # init_extend=False
-            init_extend=True,
+            init_extend=False
+            # init_extend=True,
         )
         return graph
 

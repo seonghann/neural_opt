@@ -78,6 +78,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         self.val_counter = 0
         self.test_counter = 0
+        return
 
     def transform_test(self, score_x, score_q, pos, atom_type, edge_index, batch, num_nodes, q_type):
         """Debugging. 각 transform의 값과 크기 비교."""
@@ -178,7 +179,7 @@ class BridgeDiffusion(pl.LightningModule):
         return score_x, score_q
 
     def noise_sampling(self, data):
-        ## 1. Make noised positions and target values
+        ## Make noised positions and target objectives
         if self.config.train.noise_type == "manifold":
             rxn_graph, pos, pos_init, tt, target_x, target_q = self.apply_noise(data)
         elif self.config.train.noise_type == "euclidean":

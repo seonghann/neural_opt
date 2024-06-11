@@ -88,15 +88,20 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         ), "hidden_channels must match hidden_dim"
         return
 
-    def atom_embedding(self, rxn_graph: RxnGraph) -> Tuple[torch.Tensor, torch.Tensor]:
-        natoms = len(rxn_graph.atom_type)
+    # def atom_embedding(self, rxn_graph: RxnGraph) -> Tuple[torch.Tensor, torch.Tensor]:
+    def atom_embedding(self, atom_type, r_feat, p_feat) -> Tuple[torch.Tensor, torch.Tensor]:
+        # natoms = len(rxn_graph.atom_type)
+        natoms = len(atom_type)
         num_atom_type = self.config.num_atom_type
         num_atom_feat = self.config.num_atom_feat
 
         ## 1) One-hot encoding
-        atom_type = F.one_hot(rxn_graph.atom_type, num_classes=num_atom_type)
-        r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10)
-        p_feat = F.one_hot(rxn_graph.p_feat, num_classes=10)
+        # atom_type = F.one_hot(rxn_graph.atom_type, num_classes=num_atom_type)
+        # r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10)
+        # p_feat = F.one_hot(rxn_graph.p_feat, num_classes=10)
+        atom_type = F.one_hot(atom_type, num_classes=num_atom_type)
+        r_feat = F.one_hot(r_feat, num_classes=10)
+        p_feat = F.one_hot(p_feat, num_classes=10)
 
         atom_type = atom_type.reshape(natoms, num_atom_type)
         r_feat = r_feat.reshape(natoms, num_atom_feat * 10)
@@ -112,7 +117,13 @@ class EquivariantEncoderEpsNetwork(nn.Module):
 
     def bond_embedding(
         self,
-        rxn_graph: RxnGraph,
+        # rxn_graph: RxnGraph,
+        edge_index: torch.Tensor,
+        edge_type_r: torch.Tensor,
+        edge_type_p: torch.Tensor,
+        pos: torch.Tensor,
+        pos_T: torch.Tensor,
+        atom_type: torch.Tensor,
         emb_type: str = "bond_w_d",
     ) -> torch.Tensor:
         ## Refer to condensed_encoder.condensed_edge_embedding()
@@ -124,11 +135,11 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         _enc = self.edge_encoder
         _cat_fn = self.edge_encoder.cat_fn
 
-        edge_index, edge_type_r, edge_type_p = rxn_graph.full_edge()
-        pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
+        # edge_index, edge_type_r, edge_type_p = rxn_graph.full_edge(upper_triangle=True)
+        # pos, pos_T = rxn_graph.pos, rxn_graph.pos_init  # 인자로 받도록 수정함.
 
         if self.config.reduced_dimension:
-            atom_type = rxn_graph.atom_type
+            # atom_type = rxn_graph.atom_type
             length_e = self.solver.compute_de(edge_index, atom_type).unsqueeze(-1)
             edge_length = self.solver.compute_d(edge_index, pos).unsqueeze(-1)
             edge_length_T = self.solver.compute_d(edge_index, pos_T).unsqueeze(-1)
@@ -175,20 +186,34 @@ class EquivariantEncoderEpsNetwork(nn.Module):
         """
         args: rxn_graph (DynamicRxnGraph): rxn graph object
         """
-        z, h = self.atom_embedding(rxn_graph)
+        atom_type = rxn_graph.atom_type
+        r_feat = rxn_graph.r_feat
+        p_feat = rxn_graph.p_feat
+        tt, pos, pos_T = rxn_graph.t, rxn_graph.pos, rxn_graph.pos_init
+
+        if not self.config.time_embedding:
+            tt = torch.zeros_like(tt); print(f"Debug: tt is set to zeros (to remove t-variable from neural networks")
+        if not self.config.append_pos_init:
+            pos_T = torch.zeros_like(pos_T); print(f"Debug: pos_T is set to zeros in condensed_edge_embedding")
+
+        z, h = self.atom_embedding(atom_type, r_feat, p_feat)
 
         ## Time feature concat and embedding
-        t_node = rxn_graph.t.index_select(0, rxn_graph.batch).unsqueeze(-1)
+        t_node = tt.index_select(0, rxn_graph.batch).unsqueeze(-1).to(dtype=pos.dtype)
         h_t = torch.cat([h, t_node], dim=-1)
         z_t = torch.cat([z, t_node], dim=-1)
         z_t = self.z_t_embedding(z_t)
         # h_t.shape==(natoms, num_atom_type + num_atom_feat * 10 * 2)
         # z_t.shape==(natoms, hidden_channels)
 
-        pos = rxn_graph.pos
-        pos_T = rxn_graph.pos_init
-        edge_index = rxn_graph.full_edge()[0]
-        edge_attr, dist, dist_T = self.bond_embedding(rxn_graph)
-
-        pred = self.encoder(h_t, z_t, pos, pos_T, dist, dist_T, edge_index, edge_attr)  # (n_atoms, 3)
+        bond_index, edge_type_r, edge_type_p = rxn_graph.full_edge(upper_triangle=True)
+        edge_attr, dist, dist_T = self.bond_embedding(
+            bond_index,
+            edge_type_r,
+            edge_type_p,
+            pos,
+            pos_T,
+            atom_type,
+        )
+        pred = self.encoder(h_t, z_t, pos, pos_T, dist, dist_T, bond_index, edge_attr)  # (n_atoms, 3)
         return pred

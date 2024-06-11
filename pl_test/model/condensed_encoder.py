@@ -60,7 +60,6 @@ class CondensedEncoderEpsNetwork(nn.Module):
         pos, pos_T = rxn_graph.pos, rxn_graph.pos_init
         if not self.config.append_pos_init:
             pos_T = torch.zeros_like(pos_T); print(f"Debug: pos_T is set to zeros in condensed_edge_embedding")
-            # pos_T = pos.clone(); print(f"Debug: pos_T is set to zeros in condensed_edge_embedding")
 
         if self.config.reduced_dimension:
             atom_type = rxn_graph.atom_type
@@ -125,15 +124,17 @@ class CondensedEncoderEpsNetwork(nn.Module):
         z2 = atom_feat_emb_p - atom_feat_emb_r
         zz = torch.cat([z1, z2], dim=-1)
 
-        # 2) edge_embedding
+        # 2) edge_embedding (using undirected-extended-edges)
         edge_index = rxn_graph.current_edge_index
+        edge_feat_r = rxn_graph.current_edge_feat_r
+        edge_feat_p = rxn_graph.current_edge_feat_p
         # edge_length = get_distance(pos, edge_index).unsqueeze(-1)  # (E, 1)
         # edge_length_T = get_distance(pos_T, edge_index).unsqueeze(-1)  # (E, 1)
         edge_attr, edge_length, edge_length_T = self.condensed_edge_embedding(
             rxn_graph,
             edge_index,
-            rxn_graph.current_edge_feat_r,
-            rxn_graph.current_edge_feat_p
+            edge_feat_r,
+            edge_feat_p,
         )
 
         # encoding TS geometric graph and atom-pair
@@ -154,7 +155,7 @@ class CondensedEncoderEpsNetwork(nn.Module):
 
         node = self.graph_encoding(rxn_graph, tt, pos, **kwargs)
 
-        edge_index, type_r, type_p = rxn_graph.full_edge()
+        edge_index, type_r, type_p = rxn_graph.full_edge(upper_triangle=True)
         edge, _, _ = self.condensed_edge_embedding(rxn_graph, edge_index, type_r, type_p)
         h_pair = assemble_atom_pair_feature(node, edge_index, edge)  # (E, 2H)
         pred = self.score_mlp(h_pair)  # (E, 1)

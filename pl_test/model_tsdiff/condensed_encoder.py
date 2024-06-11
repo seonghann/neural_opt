@@ -237,19 +237,13 @@ class CondenseEncoderEpsNetwork(nn.Module):
         r_feat = rxn_graph.r_feat
         p_feat = rxn_graph.p_feat
         pos = rxn_graph.pos
-        bond_index = rxn_graph.edge_index
-        # NOTE: directed edge is used in the original version of TSDiff
-        # extend to directed edge
-        bond_index = torch.cat([bond_index, bond_index.flip(0)], dim=1)
-        edge_feat_r = rxn_graph.edge_feat_r
-        edge_feat_p = rxn_graph.edge_feat_p
-        edge_feat_r = torch.cat([edge_feat_r, edge_feat_r], dim=0)
-        edge_feat_p = torch.cat([edge_feat_p, edge_feat_p], dim=0)
-
-        # bond_type = rxn_graph.edge_feat_r * len(BOND_TYPES_ENCODER) + rxn_graph.edge_feat_p
-        bond_type = edge_feat_r * len(BOND_TYPES_ENCODER) + edge_feat_p
+        # time_step = rxn_graph.t
         batch = rxn_graph.batch
-        time_step = rxn_graph.t
+
+        bond_index = rxn_graph.edge_index_raw
+        edge_feat_r = rxn_graph.edge_feat_r_raw
+        edge_feat_p = rxn_graph.edge_feat_p_raw
+        bond_type = edge_feat_r * len(BOND_TYPES_ENCODER) + edge_feat_p
 
         # convert features to one-hot encoding
         r_feat = torch.nn.functional.one_hot(r_feat, num_classes=10).reshape(len(r_feat), -1)
