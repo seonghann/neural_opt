@@ -114,7 +114,7 @@ class CondensedEncoderEpsNetwork(nn.Module):
         atom_emb = self.atom_embedding(rxn_graph.atom_type)
         n_atoms = atom_emb.size(0)
         r_feat = F.one_hot(rxn_graph.r_feat, num_classes=10).reshape(n_atoms, -1)
-        p_feat = F.one_hot(rxn_graph.r_feat, num_classes=10).reshape(n_atoms, -1)
+        p_feat = F.one_hot(rxn_graph.p_feat, num_classes=10).reshape(n_atoms, -1)
         atom_feat_emb_r = self.atom_feat_embedding(r_feat.float())
         atom_feat_emb_p = self.atom_feat_embedding(p_feat.float())
 

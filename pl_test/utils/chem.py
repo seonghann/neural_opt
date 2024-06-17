@@ -72,6 +72,7 @@ ATOMIC_NUMBERS = {
     6: 1,  # C
     7: 2,  # N
     8: 3,  # O
+    9: 4,  # F
 }
 
 ATOMIC_RADII = dict(H=0.31, He=0.28,

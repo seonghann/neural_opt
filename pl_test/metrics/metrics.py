@@ -74,9 +74,6 @@ class TrainMetrics(nn.Module):
         target_q,
         edge2graph,
         node2graph,
-        atom_type,
-        edge_r,
-        edge_p,
         log=False
     ):
         self.rmsd_metrics(pred_x, target_x, node2graph)
@@ -126,9 +123,6 @@ class ValidMetrics(nn.Module):
         target_q,
         edge2graph,
         node2graph,
-        atom_type,
-        edge_r,
-        edge_p,
         edge_index=None,
         pos=None,
         log=False
