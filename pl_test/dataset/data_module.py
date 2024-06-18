@@ -13,6 +13,16 @@ import torch
 from dataset.process_smarts import process_smarts, process_smarts_single
 
 
+def load_datamodule(config):
+    if config.dataset.type == "reaction":
+        datamodule = GrambowDataModule(config)
+    elif config.dataset.type == "molecule":
+        datamodule = QM9DataModule(config)
+    else:
+        raise ValueError()
+    return datamodule
+
+
 class AbstractDataModule(LightningDataset):
     def __init__(self, config, datasets):
         super().__init__(

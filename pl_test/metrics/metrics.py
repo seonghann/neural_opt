@@ -74,7 +74,7 @@ class TrainMetrics(nn.Module):
         target_q,
         edge2graph,
         node2graph,
-        log=False
+        log=False,
     ):
         self.rmsd_metrics(pred_x, target_x, node2graph)
         self.norm_metrics(pred_q, target_q, edge2graph)

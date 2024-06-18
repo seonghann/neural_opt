@@ -134,11 +134,11 @@ class MolGraph:
         # edge_index_p, type_p = dense_to_sparse(type_p)
 
         # replace the non-edge (-1) to 0
-        print(f"Debug: edge_type=\n{edge_type}")
+        # print(f"Debug: edge_type=\n{edge_type}")
         edge_type[edge_type < 0] = 0
         # type_r[type_r < 0] = 0
         # type_p[type_p < 0] = 0
-        print(f"Debug: edge_type=\n{edge_type}")
+        # print(f"Debug: edge_type=\n{edge_type}")
 
         # assert (edge_index_r == edge_index_p).all()
         _edge_index = edge_index

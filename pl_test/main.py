@@ -3,6 +3,7 @@ def seed_everything(seed: int = 42):
     import os
     import torch
     import numpy as np
+
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
@@ -11,13 +12,24 @@ def seed_everything(seed: int = 42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    return
 
 if __name__ == '__main__':
-    from omegaconf import OmegaConf
-    from dataset.data_module import GrambowDataModule
     import os
     import sys
     import pathlib
+
+    import torch
+    from pytorch_lightning import Trainer
+    from pytorch_lightning.callbacks import ModelCheckpoint
+    from omegaconf import OmegaConf
+
+    from dataset.data_module import load_datamodule
+    from diffusion.diffusion_model import BridgeDiffusion
+
+    torch.set_default_dtype(torch.float32)
+    # torch.set_default_dtype(torch.float64)
+
 
     # Test data load
     if len(sys.argv) == 1:
@@ -26,24 +38,21 @@ if __name__ == '__main__':
         config_file = sys.argv[-1]
     config = OmegaConf.load(config_file)
     print(f"Debug: config=\n{config}")
-    datamodule = GrambowDataModule(config)
-    print(f"data load success: {datamodule}")
-    print("-----------------------------------------------------")
 
-    # Test model load
-    from diffusion.diffusion_model import BridgeDiffusion
-    model = BridgeDiffusion(config)
-
-    import torch
-    from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import ModelCheckpoint
-    torch.set_default_dtype(torch.float32)
-    # torch.set_default_dtype(torch.float64)
     seed_everything(config.train.seed)
     use_gpu = config.general.gpus > 0 and torch.cuda.is_available()
     devices = config.general.gpus if use_gpu else 1
     strategy = config.general.strategy
     name = config.general.name
+
+
+    ## Load data module
+    datamodule = load_datamodule(config)
+    print(f"data load success: {datamodule}")
+    print("-----------------------------------------------------")
+
+    ## Load model
+    model = BridgeDiffusion(config)
 
     callbacks = []
     if config.general.save_model:
@@ -64,7 +73,7 @@ if __name__ == '__main__':
             monitor="valid/rmsd_perr",
             save_top_k=5,
             mode='min',
-            every_n_epochs=1
+            every_n_epochs=1,
         )
         last_ckpt_save = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
@@ -86,7 +95,7 @@ if __name__ == '__main__':
         enable_progress_bar=True,
         callbacks=callbacks,
         log_every_n_steps=50 if name != 'debug' else 1,
-        logger=[]
+        logger=[],
     )
 
     if not config.general.test_only:

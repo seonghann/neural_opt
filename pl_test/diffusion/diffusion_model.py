@@ -1,22 +1,24 @@
-import torch
-import pytorch_lightning as pl
 import time
-from torch_scatter import scatter_mean
 
-from model.condensed_encoder import CondensedEncoderEpsNetwork
-from model.equivariant_encoder import EquivariantEncoderEpsNetwork
+import torch
+from torch_scatter import scatter_mean
+from torch_geometric.data import Batch
+import pytorch_lightning as pl
+
+import wandb
+from tqdm.auto import tqdm
+
 from utils.wandb_utils import setup_wandb
 from utils.rxn_graph import RxnGraph, DynamicRxnGraph, MolGraph, DynamicMolGraph
 from utils.geodesic_solver import GeodesicSolver
 from diffusion.noise_scheduler import load_noise_scheduler
 from metrics.metrics import LossFunction, SamplingMetrics, TrainMetrics, ValidMetrics
+from model import get_optimizer, get_scheduler
+from model.geodiff_encoder import GeoDiffEncoder
+from model.condensed_encoder import CondensedEncoderEpsNetwork
+from model.equivariant_encoder import EquivariantEncoderEpsNetwork
 from model_tsdiff.condensed_encoder import CondenseEncoderEpsNetwork as CondensedEncoderEpsNetwork2
 from model_tsdiff.geometry import get_distance, eq_transform
-from model import get_optimizer, get_scheduler
-
-from torch_geometric.data import Batch
-import wandb
-from tqdm.auto import tqdm
 
 
 def _masking(num_nodes):
@@ -44,7 +46,7 @@ class BridgeDiffusion(pl.LightningModule):
         elif config.model.name == "condensed2":
             self.NeuralNet = CondensedEncoderEpsNetwork2(config.model)
         elif config.model.name == "geodiff":
-            raise NotImplementedError()
+            self.NeuralNet = GeoDiffEncoder(config.model)
         else:
             raise NotImplementedError
 
@@ -85,13 +87,16 @@ class BridgeDiffusion(pl.LightningModule):
         self.val_counter = 0
         self.test_counter = 0
 
-        if self.config.model.name in ["equivariant", "condensed", "condensed2"]:
+        if self.config.dataset.type == "reaction":
             self.graph = RxnGraph
             self.dynamic_graph = DynamicRxnGraph
-        elif self.config.model.name in ["geodiff"]:
+            assert self.config.model.name in ["equivariant", "condensed", "condensed2"]
+        elif self.config.dataset.type == "molecule":
             self.graph = MolGraph
             self.dynamic_graph = DynamicMolGraph
-
+            assert self.config.model.name in ["geodiff"]
+        else:
+            raise ValueError()
         return
 
     def transform_test(self, score_x, score_q, pos, atom_type, edge_index, batch, num_nodes, q_type):
@@ -203,8 +208,8 @@ class BridgeDiffusion(pl.LightningModule):
                 data,
                 do_scale=self.config.train.do_scale,
             )
-        elif self.config.train.noise_type == "tsdiff":
-            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_tsdiff(
+        elif self.config.train.noise_type == "diffusion":
+            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion(
                 data,
                 do_scale=self.config.train.do_scale,
             )
@@ -271,7 +276,7 @@ class BridgeDiffusion(pl.LightningModule):
     ):
         """weight of loss at eact time step (\lambda(t))"""
         loss_weight_type = self.config.train.loss_weight
-        if loss_weight_type == "tsdiff":
+        if loss_weight_type == "diffusion":
             a = self.noise_schedule.get_alpha(time_step, device=time_step.device)
             weight = a / (1.0 - a)
         elif loss_weight_type == "ddbm_h_transform":
@@ -283,52 +288,8 @@ class BridgeDiffusion(pl.LightningModule):
             weight = None
         return weight
 
-    def training_step(self, data, i):
-        graph, target_x, target_q = self.noise_sampling(data)
-        pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
-
-        if wandb.run:
-            wandb.log({"train/lr": self.optim.param_groups[0]['lr']})
-
-        loss = self.train_loss(
-            pred_x=pred_x,
-            pred_q=pred_q,
-            true_x=target_x,
-            true_q=target_q,
-            merge_edge=edge2graph,
-            merge_node=node2graph,
-            weight=self.get_loss_weight(graph.t),
-        )
-        self.train_metrics(
-            pred_x,
-            pred_q,
-            target_x,
-            target_q,
-            edge2graph,
-            node2graph,
-            # graph.atom_type,
-            # graph.edge_feat_r,  # FIX: RxnGraph, MolGraph 모두에 대해서 작동할 수 있도록.
-            # graph.edge_feat_p,
-            log=True
-        )
-        return {"loss": loss}
-
-    def noise_level_sampling(self, data):
-        g_length = data.geodesic_length[:, 1: -1]  # (G, T-1)
-        g_last_length = data.geodesic_length[:, -1:]
-        SNR_ratio = g_length / g_last_length  # (G, T-1) SNR_ratio = SNR(1)/SNR(t)
-        t = self.noise_schedule.get_time_from_SNRratio(SNR_ratio)  # (G, T-1)
-        random_t = torch.rand(size=(t.size(0), 1), device=SNR_ratio.device)
-        diff = abs(t - random_t)
-        index = torch.argmin(diff, dim=1)
-
-        t = t[(torch.arange(t.size(0)).to(index), index)]
-        print(f"Debug: t={t}")
-        sampled_SNR_ratio = SNR_ratio[(torch.arange(SNR_ratio.size(0)).to(index), index)]
-        return index, t, sampled_SNR_ratio
-
-    def apply_noise_tsdiff(self, data, do_scale=True):
-        """diffusion noise sampling (no bridge). refer to TSDiff"""
+    def apply_noise_diffusion(self, data, do_scale=True):
+        """diffusion noise sampling (no bridge). refer to GeoDiff, TSDiff"""
         assert self.noise_schedule.name == "TSDiffNoiseScheduler"
 
         graph = self.graph.from_batch(data)
@@ -431,172 +392,6 @@ class BridgeDiffusion(pl.LightningModule):
             pass
 
         return graph, mu_t, pos_T, time_step, pos_target, q_target
-
-    def apply_noise(self, data):
-        graph = self.graph.from_batch(data)
-        edge_index = graph.full_edge(upper_triangle=True)[0]
-
-        node2graph = graph.batch
-        edge2graph = node2graph.index_select(0, edge_index[0])
-        num_nodes = data.ptr[1:] - data.ptr[:-1]
-
-        # sampling time step
-        t_index, tt, SNR_ratio = self.noise_level_sampling(data)  # (G, ), (G, ), (G, )
-
-        t_index_node = t_index.index_select(0, node2graph)  # (N, )
-        mean = data.pos[(torch.arange(len(t_index_node)), t_index_node)]  # (N, 3)
-        pos_init = data.pos[:, -1]
-
-        # sigma = SNR_ratio * self.noise_schedule.get_sigma(torch.ones_like(SNR_ratio))
-        # sigma_hat = sigma * (1 - SNR_ratio)  # (G, )
-        # NOTE : The above two is equivalent to
-        sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
-        sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (E, )
-        noise = torch.randn(size=(edge_index.size(1),), device=edge_index.device) * sigma_hat_edge.sqrt()  # dq, (E, )
-
-        # apply noise
-        init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
-            mean,
-            noise,
-            edge_index,
-            graph.atom_type,
-            node2graph,
-            num_nodes,
-            q_type=self.q_type,
-            num_iter=self.config.manifold.ode_solver.iter,
-            max_iter=self.config.manifold.ode_solver.max_iter,
-            ref_dt=self.config.manifold.ode_solver.ref_dt,
-            min_dt=self.config.manifold.ode_solver.min_dt,
-            max_dt=self.config.manifold.ode_solver.max_dt,
-            err_thresh=self.config.manifold.ode_solver.vpae_thresh,
-            verbose=0,
-            method="Heun",
-            pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
-            pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
-        )
-
-        batch_pos_noise = last["x"]  # (B, n, 3)
-        batch_x_dot = last["x_dot"]  # (B, n, 3)
-        unbatch_node_mask = _masking(num_nodes)
-        pos_noise = batch_pos_noise.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
-        x_dot = batch_x_dot.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
-
-        batch_q_dot = last["q_dot"]  # (B, e)
-        # batch_q = last["q"]  # (B, e) # NOTE : for debugging
-        batch_q_init = init["q"]  # (B, e)
-        e = batch_q_dot.size(1)
-        unbatch_edge_index = index_tensor[1] + index_tensor[0] * e
-        q_dot = batch_q_dot.reshape(-1)[unbatch_edge_index]  # (E, )
-        # q = batch_q.reshape(-1)[unbatch_edge_index]  # (E, ) # NOTE : for debugging
-        q_init = batch_q_init.reshape(-1)[unbatch_edge_index]  # (E, )
-
-        # Check stability, percent error > threshold, then re-solve
-        retry_index = stats["ban_index"].sort().values
-        if len(retry_index) > 0:
-            node_select = torch.isin(node2graph, retry_index)
-            edge_select = torch.isin(edge2graph, retry_index)
-            _batch = torch.arange(len(retry_index), device=mean.device).repeat_interleave(num_nodes[retry_index])
-            _num_nodes = num_nodes[retry_index]
-            _num_edges = _num_nodes * (_num_nodes - 1) // 2
-            _ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=_num_nodes.device), _num_nodes.cumsum(0)])
-            _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
-
-            self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(data)}, Retry...")
-            _init, _last, _iter, _index_tensor, _stats = self.geodesic_solver.batch_geodesic_ode_solve(
-                mean[node_select],
-                noise[edge_select],
-                _full_edge,
-                graph.atom_type[node_select],
-                _batch,
-                _num_nodes,
-                q_type=self.q_type,
-                num_iter=self.config.manifold.ode_solver.iter,
-                max_iter=self.config.manifold.ode_solver.max_iter,
-                ref_dt=self.config.manifold.ode_solver._ref_dt,
-                min_dt=self.config.manifold.ode_solver._min_dt,
-                max_dt=self.config.manifold.ode_solver._max_dt,
-                err_thresh=self.config.manifold.ode_solver.vpae_thresh,
-                verbose=0,
-                method="RK4",
-                pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
-                pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
-            )
-
-            _batch_pos_noise = _last["x"]  # (b, n', 3)
-            _batch_x_dot = _last["x_dot"]  # (b, n', 3)
-            _unbatch_node_mask = _masking(_num_nodes)
-            _pos_noise = _batch_pos_noise.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
-            _x_dot = _batch_x_dot.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
-
-            _batch_q_dot = _last["q_dot"]  # (b, e')
-            # _batch_q = _last["q"]  # (b, e') # NOTE : for debugging
-            _e = _batch_q_dot.size(1)
-            _unbatch_edge_index = _index_tensor[1] + _index_tensor[0] * _e
-            _q_dot = _batch_q_dot.reshape(-1)[_unbatch_edge_index]  # (E', )
-            # _q = _batch_q.reshape(-1)[_unbatch_edge_index]  # (E', ) # NOTE : for debugging
-
-            pos_noise[node_select] = _pos_noise
-            x_dot[node_select] = _x_dot
-            q_dot[edge_select] = _q_dot
-            # q[edge_select] = _q  # NOTE : for debugging
-
-            ban_index = _stats["ban_index"].sort().values
-            ban_index = retry_index[ban_index]
-
-        else:
-            ban_index = torch.LongTensor([])
-
-        # beta = self.noise_schedule.get_beta(tt)
-        # coeff = beta / sigma_hat
-        # coeff = 1 / sigma_hat
-        coeff = torch.ones_like(tt)
-        coeff_node = coeff.index_select(0, node2graph)  # (N, )
-        coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
-        # target is not exactly the score function.
-        # target = beta * score
-        target_x = - x_dot * coeff_node.unsqueeze(-1)
-        target_q = - q_dot * coeff_edge
-
-        # target_q = (q_init - q) * coeff_edge  # NOTE : for debugging
-
-        ##############################################################
-        print(f"Debug: Target is set to straight vector from x_t to x_0 in apply_noise()")
-        x_0 = data.pos[:, 0]
-        x_dot = pos_noise - x_0
-        q_dot = self.geodesic_solver.batch_dx2dq(
-            x_dot,
-            mean,
-            graph.atom_type,
-            edge_index,
-            node2graph, num_nodes,
-            q_type=self.q_type
-        )
-
-        target_x = - x_dot * coeff_node.unsqueeze(-1)
-        target_q = - q_dot * coeff_edge
-        ##############################################################
-
-
-        if len(ban_index) > 0:
-            ban_index = ban_index.to(torch.long)
-            rxn_idx = [data.rxn_idx[i] for i in ban_index]
-            self.print(f"\n[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}"
-                        f"\n\trxn_idx: {rxn_idx}\n\ttime index: {t_index[ban_index].tolist()}")
-            ban_node_mask = torch.isin(node2graph, ban_index)
-            ban_edge_mask = torch.isin(edge2graph, ban_index)
-            ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)
-
-            data = Batch.from_data_list(data[~ban_batch_mask])
-            graph = self.graph.from_batch(data)
-
-            pos_noise = pos_noise[~ban_node_mask]
-            x_dot = x_dot[~ban_node_mask]
-            pos_init = pos_init[~ban_node_mask]
-            tt = tt[~ban_batch_mask]
-            target_x = target_x[~ban_node_mask]
-            target_q = target_q[~ban_edge_mask]
-
-        return graph, pos_noise, pos_init, tt, target_x, target_q
 
     def apply_noise_ddbm(self, data, objective="h_transform", do_scale=False):
         assert self.config.diffusion.scheduler.name.lower() == "monomial"
@@ -710,6 +505,33 @@ class BridgeDiffusion(pl.LightningModule):
         if self.train_metrics is not None:
             self.train_metrics.reset()
 
+    def training_step(self, data, i):
+        graph, target_x, target_q = self.noise_sampling(data)
+        pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
+
+        if wandb.run:
+            wandb.log({"train/lr": self.optim.param_groups[0]['lr']})
+
+        loss = self.train_loss(
+            pred_x=pred_x,
+            pred_q=pred_q,
+            true_x=target_x,
+            true_q=target_q,
+            merge_edge=edge2graph,
+            merge_node=node2graph,
+            weight=self.get_loss_weight(graph.t),
+        )
+        self.train_metrics(
+            pred_x,
+            pred_q,
+            target_x,
+            target_q,
+            edge2graph,
+            node2graph,
+            log=True,
+        )
+        return {"loss": loss}
+
     def on_train_epoch_end(self) -> None:
         #############################################
         to_log = self.train_loss.log_epoch_metrics()
@@ -751,12 +573,9 @@ class BridgeDiffusion(pl.LightningModule):
             target_q,
             edge2graph,
             node2graph,
-            # graph.atom_type,
-            # graph.edge_feat_r,  # FIX: RxnGraph, MolGraph 모두에 대해서 작동할 수 있도록.
-            # graph.edge_feat_p,
             edge_index=edge_index,
             pos=graph.pos,
-            log=True
+            log=True,
         )
         return {"loss": loss}
 
@@ -787,8 +606,8 @@ class BridgeDiffusion(pl.LightningModule):
             for i, batch in enumerate(self.trainer.datamodule.val_dataloader()):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
-                    if self.config.sampling.score_type == "tsdiff":
-                        batch_out = self.sample_batch_tsdiff(
+                    if self.config.sampling.score_type == "diffusion":
+                        batch_out = self.sample_batch_diffusion(
                             batch,
                             stochastic=stochastic,
                             start_from_time=self.config.sampling.start_from_time,
@@ -836,12 +655,9 @@ class BridgeDiffusion(pl.LightningModule):
             target_q,
             edge2graph,
             node2graph,
-            # graph.atom_type,
-            # graph.edge_feat_r,  # FIX: RxnGraph, MolGraph 모두에 대해서 작동할 수 있도록.
-            # graph.edge_feat_p,
             edge_index=edge_index,
             pos=graph.pos,
-            log=True
+            log=True,
         )
         return {'loss': loss}
 
@@ -861,8 +677,8 @@ class BridgeDiffusion(pl.LightningModule):
             for i, batch in enumerate(self.trainer.datamodule.test_dataloader()):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
-                    if self.config.sampling.score_type == "tsdiff":
-                        batch_out = self.sample_batch_tsdiff(
+                    if self.config.sampling.score_type == "diffusion":
+                        batch_out = self.sample_batch_diffusion(
                             batch,
                             stochastic=stochastic,
                             start_from_time=self.config.sampling.start_from_time,
@@ -1015,162 +831,7 @@ class BridgeDiffusion(pl.LightningModule):
         return -score * dt
 
     @torch.no_grad()
-    def predict_dq(
-        self,
-        batch,
-        dynamic_graph,
-        pos,
-        pos_init,
-        graph,
-        full_edge,
-        node2graph,
-        edge2graph,
-        num_nodes,
-        t,
-        dt,
-        stochastic=True,
-        pred_type="ddbm",
-        perr=0.0,
-    ):
-        # assert pred_type in ["ddbm", "h_transform", "cfm"]
-        beta = None
-
-        ## Predict score term
-        if pred_type == "ddbm":
-            _, score, _, _, _= self.forward(dynamic_graph)
-
-            sigma_hat = self.noise_schedule.get_sigma_hat(t)
-            beta = self.noise_schedule.get_beta(t)
-            coeff = torch.exp(torch.log(beta) - torch.log(sigma_hat))
-            score *= coeff
-        else:
-            score = 0; print(f"Debug: score is set to 0")
-
-        # ## Predict score term
-        # if pred_type == "ddbm":
-        #     score = self.forward(dynamic_graph.to("cuda"))
-        #     if self.pred_type == "node":
-        #         score = self.geodesic_solver.batch_dx2dq(score, pos, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
-        #     elif self.pred_type == "edge":
-        #         dq_dd = self.geodesic_solver.dq_dd(pos, dynamic_graph.atom_type, full_edge, q_type=self.q_type)
-        #         if self.q_type == "morse":
-        #             score = dq_dd * score
-        #         if self.projection:
-        #             score = self.geodesic_solver.batch_projection(score, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
-
-        #     sigma_hat = self.noise_schedule.get_sigma_hat(t)
-        #     beta = self.noise_schedule.get_beta(t)
-        #     coeff = torch.exp(torch.log(beta) - torch.log(sigma_hat))
-        #     score *= coeff
-        # else:
-        #     score = 0; print(f"Debug: score is set to 0")
-
-        ## Predict h term
-        if pred_type == "ddbm":
-            h = self.get_h_transform(pos, pos_init, t, full_edge, dynamic_graph.atom_type)
-            # h = 0.0; print(f"Debug: h_transform set to zero.")
-        elif pred_type in ["h_transform", "cfm"]:
-            h_pred= -self.forward(dynamic_graph.to("cuda")); print(f"Debug: h is calculated using NeuralNet")
-            if self.pred_type == "node":
-                if self.projection:
-                    h_pred = self.geodesic_solver.batch_projection(h_pred, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="euclidean")
-                h_pred = self.geodesic_solver.batch_dx2dq(h_pred, pos, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
-            elif self.pred_type == "edge":
-                if self.q_type == "morse":
-                    dq_dd = self.geodesic_solver.dq_dd(pos, dynamic_graph.atom_type, full_edge, q_type=self.q_type)
-                    h_pred = dq_dd * h_pred
-                if self.projection:
-                    h_pred = self.geodesic_solver.batch_projection(h_pred, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
-            else:
-                raise NotImplementedError
-
-            # Reference h term (for debugging)
-            if pred_type == "h_transform":
-                # Note: h_coeff = beta_t / (sigma_square_T - sigma_square_t)
-                # Note: forward sampling에 대해서, h_transform을 학습시켰기 때문에 t <- 1 - t로 처리함.
-                # Note: beta(t) sampling이 t=0.5에 대해서 대칭적이지 않으면 문제있을 수 있음.
-                h_coeff = self.noise_schedule.get_sigma(torch.ones_like(1-t)) - self.noise_schedule.get_sigma(1-t)
-                beta = self.noise_schedule.get_beta(1-t)
-                h_coeff = torch.exp(torch.log(beta) - torch.log(h_coeff))
-
-                # h_ref = self.get_h_transform(pos, batch.pos[:, 0, :], t, full_edge, dynamic_graph.atom_type); print(f"Debug: h is set to h_transform to x0")
-                h_ref = self.get_h_transform(pos, batch.pos[:, 0, :], 1-t, full_edge, dynamic_graph.atom_type); print(f"Debug: h is set to h_transform to x0")
-                if self.projection:
-                    h_ref = self.geodesic_solver.batch_projection(h_ref, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
-                # Note: h_ref = (xt - x0) * h_coeff
-
-                # h_pred *= h_coeff
-                h_pred *= self.noise_schedule.get_beta(1-t) / (self.noise_schedule.get_sigma(1-t) - self.noise_schedule.get_sigma(torch.zeros_like(t)))  # TEST: TSDiff sampling
-            elif pred_type == "cfm":
-                h_coeff = 1.0
-                h_ref = self.geodesic_solver.batch_dx2dq(
-                    batch.pos[:, -1, :] - batch.pos[:, 0, :],  # flow matching
-                    pos,
-                    dynamic_graph.atom_type,
-                    full_edge,
-                    node2graph, num_nodes,
-                    q_type=self.q_type
-                )
-                if self.projection:
-                    h_ref = self.geodesic_solver.batch_projection(h_ref, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
-            else:
-                raise NotImplementedError
-
-
-            ## Print h-term error
-            from torch_scatter import scatter_sum
-            h_diff = (h_pred - h_ref) / h_coeff
-            h_diff_norm = scatter_sum(h_diff.square(), edge2graph).sqrt()
-            print(f"Debug: h_diff_norm={h_diff_norm}")
-            # print(f"Debug: h_ref_norm(scaled)={scatter_sum((h_ref/h_coeff).square(), edge2graph).sqrt()}")
-            h_ref_norm = scatter_sum((h_ref/h_coeff).square(), edge2graph).sqrt()
-            print(f"Debug: h_ref_norm(scaled)={h_ref_norm}")
-            perr_norm = h_diff_norm / h_ref_norm
-            print(f"Debug: perr_norm={perr_norm}")
-            print(f"Debug: perr_norm.mean()={perr_norm.mean()}")
-
-            ## Add noise to h_ref
-            ## NeuralNet이 가지는 perr을 가장하여 만듦.
-            if perr:
-                # perr = 1.0; print(f"Debug: perr={perr}")
-                # perr = 0.0; print(f"Debug: perr={perr}")
-                print(f"Debug: perr={perr}")
-                h_ref_norm = scatter_sum(h_ref.square(), edge2graph).sqrt()
-                noise_to_ref = torch.randn_like(h_ref)
-                noise_to_ref_norm = scatter_sum(noise_to_ref.square(), edge2graph).sqrt()
-                noise_to_ref *= h_ref_norm.mean() / noise_to_ref_norm.mean()
-                noise_to_ref *= perr
-                # noise_to_ref_norm = scatter_sum(noise_to_ref.square(), edge2graph).sqrt()
-                # print(f"Debug: noise_to_ref_norm={noise_to_ref_norm}")
-                noise_to_ref_norm = scatter_sum((noise_to_ref/h_coeff).square(), edge2graph).sqrt()
-                print(f"Debug: noise_to_ref_norm={noise_to_ref_norm}")
-                # print(f"Debug: h_ref=\n{h_ref / h_coeff}")
-                h_ref += noise_to_ref
-
-            # h = h_ref; print(f"Debug: h is set to h_ref")
-            h = h_pred; print(f"Debug: h is set to h_pred")
-            # if (t > 0.9).any():
-            # # if (t > 0.8).any():
-            #     print(f"Debug: h_ref is set to h")
-            #     h = h_ref
-            # else:
-            #     print(f"Debug: h_pred is set to h")
-            #     h = h_pred
-            # print(f"Debug: h_ref=\n{h_ref / h_coeff}")
-            # print(f"Debug: h_pred=\n{h_pred / h_coeff}")
-
-        if stochastic:
-            # dw = torch.sqrt(beta * dt) * torch.randn_like(score)
-            dw = torch.sqrt(beta * dt) * torch.randn_like(h)
-            # dt = dt * 100/70; print(f"Debug: dt * 100/70")
-            # dw = 0; print(f"Debug: dw is set to 0")
-            dq = - (score - h) * dt + dw
-        else:
-            dq = - (0.5 * score - h) * dt
-        return dq
-
-    @torch.no_grad()
-    def sample_batch_tsdiff(
+    def sample_batch_diffusion(
         self,
         batch,
         stochastic=True,
@@ -1268,7 +929,8 @@ class BridgeDiffusion(pl.LightningModule):
 
             loss_weight_type = self.config.train.loss_weight
             if loss_weight_type is not None:
-                assert loss_weight_type == "tsdiff"
+                # assert loss_weight_type == "tsdiff"
+                assert loss_weight_type == "diffusion"
                 node_eq /= sigmas[i]
 
             eps_pos = clip_norm(node_eq, limit=clip)
@@ -1437,6 +1099,9 @@ class BridgeDiffusion(pl.LightningModule):
 
         return samples
 
+    ##################################################################################################
+    ##################################################################################################
+    ##################################################################################################
     @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
         graph = self.graph.from_batch(batch)
@@ -1597,6 +1262,341 @@ class BridgeDiffusion(pl.LightningModule):
         self.train_metrics.reset()
         if self.local_rank == 0:
             setup_wandb(self.config)
+
+    def noise_level_sampling(self, data):
+        g_length = data.geodesic_length[:, 1: -1]  # (G, T-1)
+        g_last_length = data.geodesic_length[:, -1:]
+        SNR_ratio = g_length / g_last_length  # (G, T-1) SNR_ratio = SNR(1)/SNR(t)
+        t = self.noise_schedule.get_time_from_SNRratio(SNR_ratio)  # (G, T-1)
+        random_t = torch.rand(size=(t.size(0), 1), device=SNR_ratio.device)
+        diff = abs(t - random_t)
+        index = torch.argmin(diff, dim=1)
+
+        t = t[(torch.arange(t.size(0)).to(index), index)]
+        print(f"Debug: t={t}")
+        sampled_SNR_ratio = SNR_ratio[(torch.arange(SNR_ratio.size(0)).to(index), index)]
+        return index, t, sampled_SNR_ratio
+
+    def apply_noise(self, data):
+        graph = self.graph.from_batch(data)
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        # sampling time step
+        t_index, tt, SNR_ratio = self.noise_level_sampling(data)  # (G, ), (G, ), (G, )
+
+        t_index_node = t_index.index_select(0, node2graph)  # (N, )
+        mean = data.pos[(torch.arange(len(t_index_node)), t_index_node)]  # (N, 3)
+        pos_init = data.pos[:, -1]
+
+        # sigma = SNR_ratio * self.noise_schedule.get_sigma(torch.ones_like(SNR_ratio))
+        # sigma_hat = sigma * (1 - SNR_ratio)  # (G, )
+        # NOTE : The above two is equivalent to
+        sigma_hat = self.noise_schedule.get_sigma_hat(tt)  # (G, )
+        sigma_hat_edge = sigma_hat.index_select(0, edge2graph)  # (E, )
+        noise = torch.randn(size=(edge_index.size(1),), device=edge_index.device) * sigma_hat_edge.sqrt()  # dq, (E, )
+
+        # apply noise
+        init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
+            mean,
+            noise,
+            edge_index,
+            graph.atom_type,
+            node2graph,
+            num_nodes,
+            q_type=self.q_type,
+            num_iter=self.config.manifold.ode_solver.iter,
+            max_iter=self.config.manifold.ode_solver.max_iter,
+            ref_dt=self.config.manifold.ode_solver.ref_dt,
+            min_dt=self.config.manifold.ode_solver.min_dt,
+            max_dt=self.config.manifold.ode_solver.max_dt,
+            err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+            verbose=0,
+            method="Heun",
+            pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+            pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+        )
+
+        batch_pos_noise = last["x"]  # (B, n, 3)
+        batch_x_dot = last["x_dot"]  # (B, n, 3)
+        unbatch_node_mask = _masking(num_nodes)
+        pos_noise = batch_pos_noise.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
+        x_dot = batch_x_dot.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
+
+        batch_q_dot = last["q_dot"]  # (B, e)
+        # batch_q = last["q"]  # (B, e) # NOTE : for debugging
+        batch_q_init = init["q"]  # (B, e)
+        e = batch_q_dot.size(1)
+        unbatch_edge_index = index_tensor[1] + index_tensor[0] * e
+        q_dot = batch_q_dot.reshape(-1)[unbatch_edge_index]  # (E, )
+        # q = batch_q.reshape(-1)[unbatch_edge_index]  # (E, ) # NOTE : for debugging
+        q_init = batch_q_init.reshape(-1)[unbatch_edge_index]  # (E, )
+
+        # Check stability, percent error > threshold, then re-solve
+        retry_index = stats["ban_index"].sort().values
+        if len(retry_index) > 0:
+            node_select = torch.isin(node2graph, retry_index)
+            edge_select = torch.isin(edge2graph, retry_index)
+            _batch = torch.arange(len(retry_index), device=mean.device).repeat_interleave(num_nodes[retry_index])
+            _num_nodes = num_nodes[retry_index]
+            _num_edges = _num_nodes * (_num_nodes - 1) // 2
+            _ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=_num_nodes.device), _num_nodes.cumsum(0)])
+            _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
+
+            self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(data)}, Retry...")
+            _init, _last, _iter, _index_tensor, _stats = self.geodesic_solver.batch_geodesic_ode_solve(
+                mean[node_select],
+                noise[edge_select],
+                _full_edge,
+                graph.atom_type[node_select],
+                _batch,
+                _num_nodes,
+                q_type=self.q_type,
+                num_iter=self.config.manifold.ode_solver.iter,
+                max_iter=self.config.manifold.ode_solver.max_iter,
+                ref_dt=self.config.manifold.ode_solver._ref_dt,
+                min_dt=self.config.manifold.ode_solver._min_dt,
+                max_dt=self.config.manifold.ode_solver._max_dt,
+                err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+                verbose=0,
+                method="RK4",
+                pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+                pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+            )
+
+            _batch_pos_noise = _last["x"]  # (b, n', 3)
+            _batch_x_dot = _last["x_dot"]  # (b, n', 3)
+            _unbatch_node_mask = _masking(_num_nodes)
+            _pos_noise = _batch_pos_noise.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+            _x_dot = _batch_x_dot.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+
+            _batch_q_dot = _last["q_dot"]  # (b, e')
+            # _batch_q = _last["q"]  # (b, e') # NOTE : for debugging
+            _e = _batch_q_dot.size(1)
+            _unbatch_edge_index = _index_tensor[1] + _index_tensor[0] * _e
+            _q_dot = _batch_q_dot.reshape(-1)[_unbatch_edge_index]  # (E', )
+            # _q = _batch_q.reshape(-1)[_unbatch_edge_index]  # (E', ) # NOTE : for debugging
+
+            pos_noise[node_select] = _pos_noise
+            x_dot[node_select] = _x_dot
+            q_dot[edge_select] = _q_dot
+            # q[edge_select] = _q  # NOTE : for debugging
+
+            ban_index = _stats["ban_index"].sort().values
+            ban_index = retry_index[ban_index]
+
+        else:
+            ban_index = torch.LongTensor([])
+
+        # beta = self.noise_schedule.get_beta(tt)
+        # coeff = beta / sigma_hat
+        # coeff = 1 / sigma_hat
+        coeff = torch.ones_like(tt)
+        coeff_node = coeff.index_select(0, node2graph)  # (N, )
+        coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
+        # target is not exactly the score function.
+        # target = beta * score
+        target_x = - x_dot * coeff_node.unsqueeze(-1)
+        target_q = - q_dot * coeff_edge
+
+        # target_q = (q_init - q) * coeff_edge  # NOTE : for debugging
+
+        ##############################################################
+        print(f"Debug: Target is set to straight vector from x_t to x_0 in apply_noise()")
+        x_0 = data.pos[:, 0]
+        x_dot = pos_noise - x_0
+        q_dot = self.geodesic_solver.batch_dx2dq(
+            x_dot,
+            mean,
+            graph.atom_type,
+            edge_index,
+            node2graph, num_nodes,
+            q_type=self.q_type
+        )
+
+        target_x = - x_dot * coeff_node.unsqueeze(-1)
+        target_q = - q_dot * coeff_edge
+        ##############################################################
+
+
+        if len(ban_index) > 0:
+            ban_index = ban_index.to(torch.long)
+            rxn_idx = [data.rxn_idx[i] for i in ban_index]
+            self.print(f"\n[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}"
+                        f"\n\trxn_idx: {rxn_idx}\n\ttime index: {t_index[ban_index].tolist()}")
+            ban_node_mask = torch.isin(node2graph, ban_index)
+            ban_edge_mask = torch.isin(edge2graph, ban_index)
+            ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)
+
+            data = Batch.from_data_list(data[~ban_batch_mask])
+            graph = self.graph.from_batch(data)
+
+            pos_noise = pos_noise[~ban_node_mask]
+            x_dot = x_dot[~ban_node_mask]
+            pos_init = pos_init[~ban_node_mask]
+            tt = tt[~ban_batch_mask]
+            target_x = target_x[~ban_node_mask]
+            target_q = target_q[~ban_edge_mask]
+
+        return graph, pos_noise, pos_init, tt, target_x, target_q
+
+    @torch.no_grad()
+    def predict_dq(
+        self,
+        batch,
+        dynamic_graph,
+        pos,
+        pos_init,
+        graph,
+        full_edge,
+        node2graph,
+        edge2graph,
+        num_nodes,
+        t,
+        dt,
+        stochastic=True,
+        pred_type="ddbm",
+        perr=0.0,
+    ):
+        # assert pred_type in ["ddbm", "h_transform", "cfm"]
+        beta = None
+
+        ## Predict score term
+        if pred_type == "ddbm":
+            _, score, _, _, _= self.forward(dynamic_graph)
+
+            sigma_hat = self.noise_schedule.get_sigma_hat(t)
+            beta = self.noise_schedule.get_beta(t)
+            coeff = torch.exp(torch.log(beta) - torch.log(sigma_hat))
+            score *= coeff
+        else:
+            score = 0; print(f"Debug: score is set to 0")
+
+        # ## Predict score term
+        # if pred_type == "ddbm":
+        #     score = self.forward(dynamic_graph.to("cuda"))
+        #     if self.pred_type == "node":
+        #         score = self.geodesic_solver.batch_dx2dq(score, pos, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+        #     elif self.pred_type == "edge":
+        #         dq_dd = self.geodesic_solver.dq_dd(pos, dynamic_graph.atom_type, full_edge, q_type=self.q_type)
+        #         if self.q_type == "morse":
+        #             score = dq_dd * score
+        #         if self.projection:
+        #             score = self.geodesic_solver.batch_projection(score, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
+
+        #     sigma_hat = self.noise_schedule.get_sigma_hat(t)
+        #     beta = self.noise_schedule.get_beta(t)
+        #     coeff = torch.exp(torch.log(beta) - torch.log(sigma_hat))
+        #     score *= coeff
+        # else:
+        #     score = 0; print(f"Debug: score is set to 0")
+
+        ## Predict h term
+        if pred_type == "ddbm":
+            h = self.get_h_transform(pos, pos_init, t, full_edge, dynamic_graph.atom_type)
+            # h = 0.0; print(f"Debug: h_transform set to zero.")
+        elif pred_type in ["h_transform", "cfm"]:
+            h_pred= -self.forward(dynamic_graph.to("cuda")); print(f"Debug: h is calculated using NeuralNet")
+            if self.pred_type == "node":
+                if self.projection:
+                    h_pred = self.geodesic_solver.batch_projection(h_pred, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="euclidean")
+                h_pred = self.geodesic_solver.batch_dx2dq(h_pred, pos, graph.atom_type, full_edge, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
+            elif self.pred_type == "edge":
+                if self.q_type == "morse":
+                    dq_dd = self.geodesic_solver.dq_dd(pos, dynamic_graph.atom_type, full_edge, q_type=self.q_type)
+                    h_pred = dq_dd * h_pred
+                if self.projection:
+                    h_pred = self.geodesic_solver.batch_projection(h_pred, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
+            else:
+                raise NotImplementedError
+
+            # Reference h term (for debugging)
+            if pred_type == "h_transform":
+                # Note: h_coeff = beta_t / (sigma_square_T - sigma_square_t)
+                # Note: forward sampling에 대해서, h_transform을 학습시켰기 때문에 t <- 1 - t로 처리함.
+                # Note: beta(t) sampling이 t=0.5에 대해서 대칭적이지 않으면 문제있을 수 있음.
+                h_coeff = self.noise_schedule.get_sigma(torch.ones_like(1-t)) - self.noise_schedule.get_sigma(1-t)
+                beta = self.noise_schedule.get_beta(1-t)
+                h_coeff = torch.exp(torch.log(beta) - torch.log(h_coeff))
+
+                # h_ref = self.get_h_transform(pos, batch.pos[:, 0, :], t, full_edge, dynamic_graph.atom_type); print(f"Debug: h is set to h_transform to x0")
+                h_ref = self.get_h_transform(pos, batch.pos[:, 0, :], 1-t, full_edge, dynamic_graph.atom_type); print(f"Debug: h is set to h_transform to x0")
+                if self.projection:
+                    h_ref = self.geodesic_solver.batch_projection(h_ref, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
+                # Note: h_ref = (xt - x0) * h_coeff
+
+                # h_pred *= h_coeff
+                h_pred *= self.noise_schedule.get_beta(1-t) / (self.noise_schedule.get_sigma(1-t) - self.noise_schedule.get_sigma(torch.zeros_like(t)))  # TEST: TSDiff sampling
+            elif pred_type == "cfm":
+                h_coeff = 1.0
+                h_ref = self.geodesic_solver.batch_dx2dq(
+                    batch.pos[:, -1, :] - batch.pos[:, 0, :],  # flow matching
+                    pos,
+                    dynamic_graph.atom_type,
+                    full_edge,
+                    node2graph, num_nodes,
+                    q_type=self.q_type
+                )
+                if self.projection:
+                    h_ref = self.geodesic_solver.batch_projection(h_ref, pos, dynamic_graph.atom_type, full_edge, dynamic_graph.batch, num_nodes, q_type=self.q_type, proj_type="manifold")
+            else:
+                raise NotImplementedError
+
+
+            ## Print h-term error
+            from torch_scatter import scatter_sum
+            h_diff = (h_pred - h_ref) / h_coeff
+            h_diff_norm = scatter_sum(h_diff.square(), edge2graph).sqrt()
+            print(f"Debug: h_diff_norm={h_diff_norm}")
+            # print(f"Debug: h_ref_norm(scaled)={scatter_sum((h_ref/h_coeff).square(), edge2graph).sqrt()}")
+            h_ref_norm = scatter_sum((h_ref/h_coeff).square(), edge2graph).sqrt()
+            print(f"Debug: h_ref_norm(scaled)={h_ref_norm}")
+            perr_norm = h_diff_norm / h_ref_norm
+            print(f"Debug: perr_norm={perr_norm}")
+            print(f"Debug: perr_norm.mean()={perr_norm.mean()}")
+
+            ## Add noise to h_ref
+            ## NeuralNet이 가지는 perr을 가장하여 만듦.
+            if perr:
+                # perr = 1.0; print(f"Debug: perr={perr}")
+                # perr = 0.0; print(f"Debug: perr={perr}")
+                print(f"Debug: perr={perr}")
+                h_ref_norm = scatter_sum(h_ref.square(), edge2graph).sqrt()
+                noise_to_ref = torch.randn_like(h_ref)
+                noise_to_ref_norm = scatter_sum(noise_to_ref.square(), edge2graph).sqrt()
+                noise_to_ref *= h_ref_norm.mean() / noise_to_ref_norm.mean()
+                noise_to_ref *= perr
+                # noise_to_ref_norm = scatter_sum(noise_to_ref.square(), edge2graph).sqrt()
+                # print(f"Debug: noise_to_ref_norm={noise_to_ref_norm}")
+                noise_to_ref_norm = scatter_sum((noise_to_ref/h_coeff).square(), edge2graph).sqrt()
+                print(f"Debug: noise_to_ref_norm={noise_to_ref_norm}")
+                # print(f"Debug: h_ref=\n{h_ref / h_coeff}")
+                h_ref += noise_to_ref
+
+            # h = h_ref; print(f"Debug: h is set to h_ref")
+            h = h_pred; print(f"Debug: h is set to h_pred")
+            # if (t > 0.9).any():
+            # # if (t > 0.8).any():
+            #     print(f"Debug: h_ref is set to h")
+            #     h = h_ref
+            # else:
+            #     print(f"Debug: h_pred is set to h")
+            #     h = h_pred
+            # print(f"Debug: h_ref=\n{h_ref / h_coeff}")
+            # print(f"Debug: h_pred=\n{h_pred / h_coeff}")
+
+        if stochastic:
+            # dw = torch.sqrt(beta * dt) * torch.randn_like(score)
+            dw = torch.sqrt(beta * dt) * torch.randn_like(h)
+            # dt = dt * 100/70; print(f"Debug: dt * 100/70")
+            # dw = 0; print(f"Debug: dw is set to 0")
+            dq = - (score - h) * dt + dw
+        else:
+            dq = - (0.5 * score - h) * dt
+        return dq
 
 
 # def align(pos, pos_ref):
