@@ -69,15 +69,10 @@ class MolGraph:
             # make it undirected
             self.edge_index = torch.cat([self.edge_index, self.edge_index.flip(0)], dim=1)
             self.edge_feat = torch.cat([self.edge_feat, self.edge_feat], dim=0)
-            # self.edge_feat_r = torch.cat([self.edge_feat_r, self.edge_feat_r], dim=0)
-            # self.edge_feat_p = torch.cat([self.edge_feat_p, self.edge_feat_p], dim=0)
 
-            # edge_index, type_r, type_p = self.extend_graph_order(order=order)
             edge_index, edge_type = self.extend_graph_order(order=order)
             self.edge_index = edge_index
             self.edge_feat = edge_type
-            # self.edge_feat_r = type_r
-            # self.edge_feat_p = type_p
 
             self.extended = True
         return
@@ -121,41 +116,20 @@ class MolGraph:
         assert (bond * ord == 0).all()
         edge_type = bond + ord
 
-        # # look up the edges only in one of the r-edges and p-edges
-        # # in that case, set the edge type to -1
-        # nonzero_r = - (new_r != 0).to(torch.float)
-        # nonzero_p = - (new_p != 0).to(torch.float)
-        # type_r = torch.where(new_r != 0, new_r, nonzero_p).to(torch.long)
-        # type_p = torch.where(new_p != 0, new_p, nonzero_r).to(torch.long)
-
         # convert it to sparse
         edge_index, edge_type = dense_to_sparse(edge_type)
-        # edge_index_r, type_r = dense_to_sparse(type_r)
-        # edge_index_p, type_p = dense_to_sparse(type_p)
 
         # replace the non-edge (-1) to 0
-        # print(f"Debug: edge_type=\n{edge_type}")
         edge_type[edge_type < 0] = 0
-        # type_r[type_r < 0] = 0
-        # type_p[type_p < 0] = 0
-        # print(f"Debug: edge_type=\n{edge_type}")
 
-        # assert (edge_index_r == edge_index_p).all()
         _edge_index = edge_index
-        # _edge_index = edge_index_r
-
         edge_index, edge_type = coalesce(_edge_index, edge_type.long(), N, N)  # modify data
-        # edge_index, type_r = coalesce(_edge_index, type_r.long(), N, N)  # modify data
-        # _, type_p = coalesce(_edge_index, type_p.long(), N, N)  # modify data
 
         return edge_index, edge_type
-        # return edge_index, type_r, type_p
 
     def update(self, pos, pos_=None):
         N = self.num_nodes
         adj = torch.sparse.LongTensor(self.edge_index, self.edge_feat, torch.Size([N, N]))
-        # r_adj = torch.sparse.LongTensor(self.edge_index, self.edge_feat_r, torch.Size([N, N]))
-        # p_adj = torch.sparse.LongTensor(self.edge_index, self.edge_feat_p, torch.Size([N, N]))
 
         radius_idx = radius_graph(pos, r=self.cutoff, batch=self.batch)
         if pos_ is not None:
@@ -171,38 +145,22 @@ class MolGraph:
         radius_adj = radius_adj * -1000
 
         g_with_radius = (adj + radius_adj).coalesce()
-        # g_r = (r_adj + radius_adj).coalesce()
-        # g_p = (p_adj + radius_adj).coalesce()
-        # assert (g_r.indices() == g_p.indices()).all()
 
         edge_index = g_with_radius.indices()
         edge_type = g_with_radius.values()
-        # edge_index = g_r.indices()
-        # type_r = g_r.values()
-        # type_p = g_p.values()
 
         edge_type[edge_type == -1000] = 0
-        # type_r[type_r == -1000] = 0
-        # type_p[type_p == -1000] = 0
         mask = edge_type < 0
         edge_type[mask] = edge_type[mask] + 1000
-        # mask = type_r < 0
-        # type_r[mask] = type_r[mask] + 1000
-        # mask = type_p < 0
-        # type_p[mask] = type_p[mask] + 1000
 
         self.current_edge_index = edge_index
         self.current_edge_feat = edge_type
-        # self.current_edge_feat_r = type_r
-        # self.current_edge_feat_p = type_p
         return
 
     def full_edge(self, upper_triangle=True):
         # make fully connected graph
         N = self.num_nodes
         adj = torch.sparse_coo_tensor(self.edge_index, self.edge_feat, torch.Size([N, N]))
-        # r_adj = torch.sparse_coo_tensor(self.edge_index, self.edge_feat_r, torch.Size([N, N]))
-        # p_adj = torch.sparse_coo_tensor(self.edge_index, self.edge_feat_p, torch.Size([N, N]))
 
         edge_index_list = []
         for idx in unbatch(torch.arange(N), self.batch):
@@ -216,23 +174,15 @@ class MolGraph:
         )
 
         g_with_radius = (adj + full_adj).coalesce()
-        # g_r = (r_adj + full_adj).coalesce()
-        # g_p = (p_adj + full_adj).coalesce()
 
         edge_index = g_with_radius.indices()
-        # edge_index = g_r.indices()
         edge_type = g_with_radius.values() - 1
-        # type_r = g_r.values() - 1
-        # type_p = g_p.values() - 1
 
         if upper_triangle:
             mask = edge_index[0] < edge_index[1]
             edge_index = edge_index[:, mask]
             edge_type = edge_type[mask]
-            # type_r = type_r[mask]
-            # type_p = type_p[mask]
 
-        # return edge_index, type_r, type_p
         return edge_index, edge_type
 
 
@@ -250,7 +200,6 @@ class RxnGraph:
             order=3,
             cutoff=10.0,
             init_extend=True,
-            # init_extend=False,  # NOTE:
     ):
         self.atom_type = atom_type
         self.edge_index = edge_index
@@ -396,6 +345,7 @@ class RxnGraph:
         self.current_edge_index = edge_index
         self.current_edge_feat_r = type_r
         self.current_edge_feat_p = type_p
+        return
 
     def full_edge(self, upper_triangle=True):
         # make fully connected graph
@@ -439,11 +389,7 @@ class DynamicMolGraph(MolGraph):
         atom_type,
         edge_index,
         edge_feat,
-        # edge_feat_r,
-        # edge_feat_p,
         node_feat,
-        # r_feat,
-        # p_feat,
         batch,
         smarts="",
         order=3,
@@ -454,11 +400,7 @@ class DynamicMolGraph(MolGraph):
             atom_type,
             edge_index,
             edge_feat,
-            # edge_feat_r,
-            # edge_feat_p,
             node_feat,
-            # r_feat,
-            # p_feat,
             batch,
             smarts=smarts,
             order=order,
@@ -553,6 +495,7 @@ class DynamicRxnGraph(RxnGraph):
         self.t = t
 
         self.update(pos, pos_=pos_init)
+        return
 
     @classmethod
     def from_graph(cls, rxn_graph, pos, pos_init, t):
@@ -582,11 +525,9 @@ class DynamicRxnGraph(RxnGraph):
             order=order,
             cutoff=cutoff,
             init_extend=False
-            # init_extend=True,
         )
         return graph
 
-    # def update_graph(self, pos, score=None, t=None):  # batch argument is deprecated.
     def update_graph(self, pos, batch, score=None, t=None):
         self.update(pos, self.pos_init)
         self.pos_traj.append(pos.to("cpu"))
@@ -596,6 +537,7 @@ class DynamicRxnGraph(RxnGraph):
             self.time_traj.append(t.to("cpu"))
             self.t = t
         self.pos = pos
+        return
 
 
 if __name__ == "__main__":
@@ -603,7 +545,6 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
     from dataset.data_module import GrambowDataModule, QM9DataModule
 
-    # config = OmegaConf.load("../configs/training.tsdiff.condensed2.yaml")
     config = OmegaConf.create(
         {
             "train": {

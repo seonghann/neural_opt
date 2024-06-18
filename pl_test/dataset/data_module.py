@@ -152,8 +152,10 @@ class GrambowDataset(InMemoryDataset):
             atoms = atoms_list[0]
 
             # extract info
-            rxn_idx = atoms.info["idx"]
-            if rxn_idx not in index:
+            # rxn_idx = atoms.info["idx"]
+            idx = atoms.info["idx"]
+            # if rxn_idx not in index:
+            if idx not in index:
                 continue
             rxn_smarts = atoms.info["rxn_smarts"]
             if not rxn_smarts:
@@ -198,7 +200,8 @@ class GrambowDataset(InMemoryDataset):
                 edge_feat_p=p_edge_type,
                 r_feat=r_feat,
                 p_feat=p_feat,
-                rxn_idx=rxn_idx,
+                # rxn_idx=rxn_idx,
+                idx=idx,
                 rxn_smarts=rxn_smarts,
                 geodesic_length=geodesic_length,
             )

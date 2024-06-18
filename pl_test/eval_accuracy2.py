@@ -2,8 +2,7 @@
 Evaluate accuracy of generated geometries
 
 (Usage)
-    >>> python eval_accuracy.py reproduce/wb97xd3/samples_all.pkl
-    >>> python eval_accuracy.py \
+    >>> python eval_accuracy2.py \
     --config_yaml configs/sampling.h.condensed2.yaml \
     --prb_pt save_dynamic.pt
     --align_target DMAE
@@ -13,7 +12,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--config_yaml", type=str)
 parser.add_argument("--prb_pt", type=str)
-parser.add_argument("--align_target", type=str, default="DMAE", choices=["DMAE", "RMSD"])
+parser.add_argument("--align_target", type=str, default="DMAE", choices=["DMAE", "RMSD", "none"])
 args = parser.parse_args()
 print(args)
 ###########################################################################
@@ -27,7 +26,7 @@ from math import sqrt
 
 
 def remap2atomic_numbers(atomic_numbers):
-    MAPPING = {0: 1, 1: 6, 2: 7, 3: 8}
+    MAPPING = {0: 1, 1: 6, 2: 7, 3: 8, 4: 9}
     symbols = [MAPPING[num.item()] for num in atomic_numbers]
     return symbols
 
@@ -65,26 +64,33 @@ def calc_RMSD2(mol1: Atoms, mol2: Atoms, mass_weighted: bool = False):
         rmsd = np.sqrt(np.mean(np.sum((p1 - p2) ** 2, axis=1)))
     return rmsd
 
+
 def get_substruct_matches(smarts):
     from rdkit import Chem
-    smarts_r, smarts_p = smarts.split(">>")
-    mol_r = Chem.MolFromSmarts(smarts_r)
-    mol_p = Chem.MolFromSmarts(smarts_p)
 
-    matches_r = list(mol_r.GetSubstructMatches(mol_r, uniquify=False))
-    map_r = np.array([atom.GetAtomMapNum() for atom in mol_r.GetAtoms()]) - 1
-    map_r_inv = np.argsort(map_r)
-    for i in range(len(matches_r)):
-        matches_r[i] = tuple(map_r[np.array(matches_r[i])[map_r_inv]])
+    def _get_substruct_matches(smarts):
+        mol = Chem.MolFromSmarts(smarts)
+        matches = list(mol.GetSubstructMatches(mol, uniquify=False))
+        map = np.array([atom.GetAtomMapNum() for atom in mol.GetAtoms()]) - 1
+        map_inv = np.argsort(map)
+        for i in range(len(matches)):
+            matches[i] = tuple(map[np.array(matches[i])[map_inv]])
+        return matches
 
-    matches_p = list(mol_p.GetSubstructMatches(mol_p, uniquify=False))
-    map_p = np.array([atom.GetAtomMapNum() for atom in mol_p.GetAtoms()]) - 1
-    map_p_inv = np.argsort(map_p)
-    for i in range(len(matches_p)):
-        matches_p[i] = tuple(map_p[np.array(matches_p[i])[map_p_inv]])
+    smarts_list = smarts.split(">>")
+    if len(smarts_list) == 2:
+        smarts_r, smarts_p = smarts_list
+        matches_r = _get_substruct_matches(smarts_r)
+        matches_p = _get_substruct_matches(smarts_p)
+        matches = set(matches_r) & set(matches_p)
+        # matches = set(matches_r) | set(matches_p); print(f"Debug: change & -> |")
+    elif len(smarts_list) == 1:
+        smarts = smarts_list[0]
+        matches = _get_substruct_matches(smarts)
+        matches = set(matches)
+    else:
+        raise ValueError()
 
-    matches = set(matches_r) & set(matches_p)
-    # matches = set(matches_r) | set(matches_p); print(f"Debug: change & -> |")
     matches = list(matches)
     matches.sort()
     return matches
@@ -105,9 +111,7 @@ def align_jhwoo(
     # from alignXYZ import get_substruct_matches, get_min_dmae_match
     from alignXYZ import get_min_dmae_match
 
-    # print(f"Debug: smiles={smiles}")
     matches = get_substruct_matches(smiles)
-    # print(f"Debug: matches={matches}")
 
     ref_pos = ref_atoms.positions
     prb_pos = prb_atoms.positions
@@ -130,16 +134,23 @@ def align_jhwoo(
     return torch.from_numpy(ret_pos)
 
 
+def calc_DMAE(pos_ref, pos_prb):
+    dm_ref = torch.cdist(pos_ref, pos_ref)
+    dm_prb = torch.cdist(pos_prb, pos_prb)
+    dmae = torch.triu(abs(dm_ref - dm_prb), diagonal=1).sum()
+    dmae /= len(pos_ref) * (len(pos_ref) - 1) / 2
+    return dmae
+
 
 if __name__ == "__main__":
     ###########################################################################
     ## Load reference pos
-    from dataset.data_module import GrambowDataModule
+    from dataset.data_module import load_datamodule
     from omegaconf import OmegaConf
 
-    datamodule = GrambowDataModule(OmegaConf.load(args.config_yaml))
+    datamodule = load_datamodule(OmegaConf.load(args.config_yaml))
     for batch in datamodule.test_dataloader():
-        print(f"Debug: batch.rxn_idx={batch.rxn_idx}")
+        print(f"Debug: batch.idx={batch.idx}")
 
     pos_ref_list = []
     for batch in datamodule.test_dataloader():
@@ -155,12 +166,17 @@ if __name__ == "__main__":
     print(f"Load {args.prb_pt}")
 
     pos_list = []
+    xT_list = []  # starting geometries (e.g., MMFF of MMFFtoDFT)
     atom_type_list = []
     smarts_list = []
     for batch in data:
         natoms = batch.batch.bincount()
         pos = batch.pos.split(natoms.tolist())
         pos_list.extend(pos)
+
+        xT = batch.pos_traj[0]
+        xT = xT.split(natoms.tolist())
+        xT_list.extend(xT)
 
         atom_type = batch.atom_type.split(natoms.tolist())
         atom_type_list.extend(atom_type)
@@ -170,11 +186,16 @@ if __name__ == "__main__":
     ###########################################################################
 
 
+    ###########################################################################
     ## Calculate DMAE, RMSD
     rmsd_list = []
     dmae_list = []
+    rmsd_list_xT = []
+    dmae_list_xT = []
     # q_norm_list = []  # TODO:
-    for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)): 
+ 
+    # for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)): 
+    for i, (pos_ref, pos_gen, xT) in enumerate(zip(pos_ref_list, pos_list, xT_list)): 
         atom_type = atom_type_list[i]
 
         smiles = smarts_list[i]
@@ -182,23 +203,32 @@ if __name__ == "__main__":
         atom_type = remap2atomic_numbers(atom_type)
         atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
         atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
-        pos_gen = align_jhwoo(atoms_ref, atoms_gen, smiles, target=args.align_target)
+        atoms_xT = Atoms(symbols=atom_type, positions=xT)
 
-        atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
-        atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
+        if args.align_target.lower() != "none":
+            pos_gen = align_jhwoo(atoms_ref, atoms_gen, smiles, target=args.align_target)
+            xT = align_jhwoo(atoms_ref, atoms_xT, smiles, target=args.align_target)
+            atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
+            atoms_xT = Atoms(symbols=atom_type, positions=xT)
+
         rmsd = calc_RMSD2(atoms_ref, atoms_gen)
+        rmsd_xT = calc_RMSD2(atoms_ref, atoms_xT)
 
-        dm_ref = torch.cdist(pos_ref, pos_ref)
-        dm_gen = torch.cdist(pos_gen, pos_gen)
-        dmae = torch.triu(abs(dm_ref - dm_gen), diagonal=1).sum()
-        dmae /= len(pos_ref) * (len(pos_ref) - 1) / 2
+        dmae = calc_DMAE(pos_ref, pos_gen)
+        dmae_xT = calc_DMAE(pos_ref, xT)
 
         rmsd_list.append(rmsd)
         dmae_list.append(dmae)
+        rmsd_list_xT.append(rmsd_xT)
+        dmae_list_xT.append(dmae_xT)
 
-        print(f"it={i}: rmsd={rmsd}, dmae={dmae}")
+        # print(f"it={i}: rmsd={rmsd}, dmae={dmae}")
+        print(f"it={i}: rmsd={rmsd_xT}->{rmsd}, dmae={dmae_xT}->{dmae}")
+
     rmsd_list = torch.tensor(rmsd_list)
     dmae_list = torch.tensor(dmae_list)
+    rmsd_list_xT = torch.tensor(rmsd_list_xT)
+    dmae_list_xT = torch.tensor(dmae_list_xT)
 
     print(f"dmae_list.sort()[0]=\n{dmae_list.sort()[0]}")
     print(f"rmsd_list.sort()[0]=\n{rmsd_list.sort()[0]}")
@@ -206,3 +236,13 @@ if __name__ == "__main__":
     print(f"DMAE (mean  ): {dmae_list.mean()}")
     print(f"RMSD (median): {rmsd_list.median()}")
     print(f"DMAE (median): {dmae_list.median()}")
+
+
+    print(f"xT")
+    print(f"dmae_list_xT.sort()[0]=\n{dmae_list_xT.sort()[0]}")
+    print(f"rmsd_list_xT.sort()[0]=\n{rmsd_list_xT.sort()[0]}")
+    print(f"RMSD (mean  ): {rmsd_list_xT.mean()}")
+    print(f"DMAE (mean  ): {dmae_list_xT.mean()}")
+    print(f"RMSD (median): {rmsd_list_xT.median()}")
+    print(f"DMAE (median): {dmae_list_xT.median()}")
+    ###########################################################################

@@ -882,6 +882,7 @@ class BridgeDiffusion(pl.LightningModule):
             device=pos.device,
         )
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
+        dynamic_graph.pos_traj.append(pos.to("cpu"))
 
         if start_from_time is None:
             start_from_time = num_timesteps
@@ -1053,6 +1054,7 @@ class BridgeDiffusion(pl.LightningModule):
         t = t.index_select(0, node2graph)
         dt = torch.ones_like(t) * self.config.sampling.sde_dt
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
+        dynamic_graph.pos_traj.append(pos.to("cpu"))
 
         ## Set score function
         if self.config.sampling.score_type == "ddbm_score":
@@ -1207,12 +1209,12 @@ class BridgeDiffusion(pl.LightningModule):
             else:
                 ban_index = torch.LongTensor([])
 
-            # FIX: rxn_idx -> idx?
             if len(ban_index) > 0:
                 print(f"Debug: ban_index={ban_index}")
-                print(f"Debug: batch.rxn_idx={batch.rxn_idx}")
-                rxn_idx = batch.rxn_idx[ban_index]
-                self.print(f"[Warning] geodesic solver failed solving reaction {rxn_idx}, at time {t[ban_index]}\n")
+                # print(f"Debug: batch.rxn_idx={batch.rxn_idx}")
+                print(f"Debug: batch.idx={batch.idx}")
+                idx = batch.idx[ban_index]
+                self.print(f"[Warning] geodesic solver failed solving reaction {idx}, at time {t[ban_index]}\n")
                 ban_node_mask = torch.isin(node2graph, ban_index)
                 pos_tm1[ban_node_mask] = pos[ban_node_mask] + torch.randn_like(pos[ban_node_mask]) * 1e-3
 
@@ -1424,9 +1426,11 @@ class BridgeDiffusion(pl.LightningModule):
 
         if len(ban_index) > 0:
             ban_index = ban_index.to(torch.long)
-            rxn_idx = [data.rxn_idx[i] for i in ban_index]
+            # rxn_idx = [data.rxn_idx[i] for i in ban_index]
+            idx = [data.idx[i] for i in ban_index]
             self.print(f"\n[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}"
-                        f"\n\trxn_idx: {rxn_idx}\n\ttime index: {t_index[ban_index].tolist()}")
+                        f"\n\tidx: {idx}\n\ttime index: {t_index[ban_index].tolist()}")
+                        # f"\n\trxn_idx: {rxn_idx}\n\ttime index: {t_index[ban_index].tolist()}")
             ban_node_mask = torch.isin(node2graph, ban_index)
             ban_edge_mask = torch.isin(edge2graph, ban_index)
             ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)

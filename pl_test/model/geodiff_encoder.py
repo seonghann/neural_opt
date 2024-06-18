@@ -27,7 +27,6 @@ class GeoDiffEncoder(nn.Module):
         self.layers = nn.ModuleList(
             [
                 self.atom_embedding,
-                # self.atom_feat_embedding,
                 self.edge_encoder,
                 self.encoder,
                 self.score_mlp,
