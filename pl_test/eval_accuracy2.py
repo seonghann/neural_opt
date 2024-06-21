@@ -142,13 +142,25 @@ def calc_DMAE(pos_ref, pos_prb):
     return dmae
 
 
+def calc_q_norm(solver, pos_ref, pos_prb, atom_type):
+    natoms = len(pos_ref)
+    edge_index = torch.triu_indices(natoms, natoms, offset=1)
+
+    q_prb = solver.compute_q(edge_index, atom_type, pos_prb)
+    q_ref = solver.compute_q(edge_index, atom_type, pos_ref)
+
+    norm_err = (q_prb - q_ref).square().sum().sqrt()
+    return norm_err
+
+
 if __name__ == "__main__":
     ###########################################################################
     ## Load reference pos
     from dataset.data_module import load_datamodule
     from omegaconf import OmegaConf
 
-    datamodule = load_datamodule(OmegaConf.load(args.config_yaml))
+    config = OmegaConf.load(args.config_yaml)
+    datamodule = load_datamodule(config)
     for batch in datamodule.test_dataloader():
         print(f"Debug: batch.idx={batch.idx}")
 
@@ -187,20 +199,26 @@ if __name__ == "__main__":
 
 
     ###########################################################################
+    from utils.geodesic_solver import GeodesicSolver
+
+    geodesic_solver = GeodesicSolver(config.manifold)
+    # q_type = "morse"
+
     ## Calculate DMAE, RMSD
     rmsd_list = []
     dmae_list = []
     rmsd_list_xT = []
     dmae_list_xT = []
-    # q_norm_list = []  # TODO:
+    q_norm_list = []  # TODO:
+    q_norm_list_xT = []  # TODO:
  
     # for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)): 
     for i, (pos_ref, pos_gen, xT) in enumerate(zip(pos_ref_list, pos_list, xT_list)): 
-        atom_type = atom_type_list[i]
+        _atom_type = atom_type_list[i]
 
         smiles = smarts_list[i]
 
-        atom_type = remap2atomic_numbers(atom_type)
+        atom_type = remap2atomic_numbers(_atom_type)
         atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
         atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
         atoms_xT = Atoms(symbols=atom_type, positions=xT)
@@ -217,32 +235,45 @@ if __name__ == "__main__":
         dmae = calc_DMAE(pos_ref, pos_gen)
         dmae_xT = calc_DMAE(pos_ref, xT)
 
+        q_norm = calc_q_norm(geodesic_solver, pos_ref, pos_gen, _atom_type)
+        q_norm_xT = calc_q_norm(geodesic_solver, pos_ref, xT, _atom_type)
+
         rmsd_list.append(rmsd)
         dmae_list.append(dmae)
         rmsd_list_xT.append(rmsd_xT)
         dmae_list_xT.append(dmae_xT)
+        q_norm_list.append(q_norm)
+        q_norm_list_xT.append(q_norm_xT)
 
         # print(f"it={i}: rmsd={rmsd}, dmae={dmae}")
-        print(f"it={i}: rmsd={rmsd_xT}->{rmsd}, dmae={dmae_xT}->{dmae}")
+        print(f"it={i}: rmsd={rmsd_xT}->{rmsd}, dmae={dmae_xT}->{dmae}, q_norm={q_norm_xT}->{q_norm}")
 
     rmsd_list = torch.tensor(rmsd_list)
     dmae_list = torch.tensor(dmae_list)
     rmsd_list_xT = torch.tensor(rmsd_list_xT)
     dmae_list_xT = torch.tensor(dmae_list_xT)
+    q_norm_list = torch.tensor(q_norm_list)
+    q_norm_list_xT = torch.tensor(q_norm_list_xT)
 
     print(f"dmae_list.sort()[0]=\n{dmae_list.sort()[0]}")
     print(f"rmsd_list.sort()[0]=\n{rmsd_list.sort()[0]}")
+    print(f"q_norm_list.sort()[0]=\n{q_norm_list.sort()[0]}")
     print(f"RMSD (mean  ): {rmsd_list.mean()}")
     print(f"DMAE (mean  ): {dmae_list.mean()}")
+    print(f"q_norm (mean  ): {q_norm_list.mean()}")
     print(f"RMSD (median): {rmsd_list.median()}")
     print(f"DMAE (median): {dmae_list.median()}")
+    print(f"q_norm (median): {q_norm_list.median()}")
 
 
     print(f"xT")
     print(f"dmae_list_xT.sort()[0]=\n{dmae_list_xT.sort()[0]}")
     print(f"rmsd_list_xT.sort()[0]=\n{rmsd_list_xT.sort()[0]}")
+    print(f"q_norm_list_xT.sort()[0]=\n{q_norm_list_xT.sort()[0]}")
     print(f"RMSD (mean  ): {rmsd_list_xT.mean()}")
     print(f"DMAE (mean  ): {dmae_list_xT.mean()}")
+    print(f"q_norm (mean  ): {q_norm_list_xT.mean()}")
     print(f"RMSD (median): {rmsd_list_xT.median()}")
     print(f"DMAE (median): {dmae_list_xT.median()}")
+    print(f"q_norm (median): {q_norm_list_xT.median()}")
     ###########################################################################
