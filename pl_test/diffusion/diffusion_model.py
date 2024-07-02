@@ -213,6 +213,8 @@ class BridgeDiffusion(pl.LightningModule):
                 data,
                 do_scale=self.config.train.do_scale,
             )
+        elif self.config.train.noise_type == "diffusion_riemannian":
+            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_riemannian(data)
         elif self.config.train.noise_type == "ddbm_h_transform":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_ddbm(
                 data,
@@ -307,11 +309,8 @@ class BridgeDiffusion(pl.LightningModule):
 
         t0 = self.config.diffusion.scheduler.t0
         t1 = self.config.diffusion.scheduler.t1
-        # sz = batch_size // 2 + 1
-        # half_1 = torch.randint(t0, t1, size=(sz,), device=device)
-        # half_2 = t0 + t1 - 1 - half_1
-        # time_step = torch.cat([half_1, half_2], dim=0)[:batch_size]
-        time_step = torch.randint(t0, t1, size=(batch_size,), device=device); print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
+        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
         time_step = time_step.sort()[0]
         a = self.noise_schedule.get_alpha(time_step, device=device)
 
@@ -319,7 +318,8 @@ class BridgeDiffusion(pl.LightningModule):
         a_pos = a.index_select(0, node2graph).unsqueeze(-1)
         pos_noise = torch.randn(size=pos.size(), device=device)
         pos_t = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
-        pos_t = center_pos(pos_t, data.batch)
+        # pos_t = center_pos(pos_t, data.batch)
+        pos_t = align_geom_batch(pos, pos_t, data.batch)
 
         a_edge = a.index_select(0, edge2graph)
 
@@ -328,6 +328,7 @@ class BridgeDiffusion(pl.LightningModule):
         q_t = self.geodesic_solver.compute_d_or_q(pos_t, graph.atom_type, edge_index, q_type=self.q_type)
         d_target = q_gt - q_t
 
+        ## NOTE: pos_target is set to pos - pos_t (아래 주석 처리.)
         pos_target, d_target = self.transform(
             pos_target,
             d_target,
@@ -338,14 +339,63 @@ class BridgeDiffusion(pl.LightningModule):
             num_nodes,
             self.q_type,
         )
+        ## NOTE: pos_target is set to pos - pos_t
 
         if do_scale:
+            assert self.q_type == "DM"
             pos_target *= a_pos.sqrt() / (1.0 - a_pos).sqrt()
             d_target *= a_edge.sqrt() / (1.0 - a_edge).sqrt()
         else:
             pass
 
         return graph, pos_t, pos_t, time_step, pos_target, d_target
+
+    def apply_noise_diffusion_riemannian(self, data):
+        """diffusion noise sampling (no bridge). refer to GeoDiff, TSDiff"""
+        assert self.noise_schedule.name == "TSDiffNoiseScheduler"
+
+        graph = self.graph.from_batch(data)
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+
+        batch_size = len(data.geodesic_length)
+
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        pos = data.pos[:, 0]
+        pos = center_pos(pos, data.batch)
+        device = pos.device
+
+        t0 = self.config.diffusion.scheduler.t0
+        t1 = self.config.diffusion.scheduler.t1
+        time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
+        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        time_step = time_step.sort()[0]
+        a = self.noise_schedule.get_alpha(time_step, device=device)
+
+        # a_pos = a.index_select(0, node2graph).unsqueeze(-1)
+        a_edge = a.index_select(0, edge2graph)
+
+        # Perterb pos
+        q_noise = torch.randn(size=(edge_index.size(1),), device=device)
+        q_noise *= (1.0 - a_edge).sqrt() / a_edge.sqrt()
+        # pos_t, pos_target, q_target = self.ode_noise_sampling(
+        pos_t, pos_target, q_target, graph, time_step = self.ode_noise_sampling(
+            pos,
+            q_noise,
+            edge_index,
+            graph.atom_type,
+            node2graph,
+            edge2graph,
+            num_nodes,
+            data,
+            graph,
+            time_step,
+        )
+        # pos_t = center_pos(pos_t, data.batch)
+
+        return graph, pos_t, pos_t, time_step, pos_target, q_target
 
     def apply_straight_to_x0(self, data, do_scale=False):
         """No noised version. (straight line approximation.)"""
@@ -490,6 +540,141 @@ class BridgeDiffusion(pl.LightningModule):
         target_q = self.geodesic_solver.batch_dx2dq(target_x, pos_noise, graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type).reshape(-1)
 
         return graph, pos_noise, pos_init, tt, target_x, target_q
+
+    def ode_noise_sampling(
+        self,
+        pos,
+        q_noise,
+        edge_index,
+        atom_type,
+        node2graph,
+        edge2graph,
+        num_nodes,
+        data,
+        graph,
+        time_step,
+    ):
+        init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
+            pos,
+            q_noise,
+            edge_index,
+            atom_type,
+            node2graph,
+            num_nodes,
+            q_type=self.q_type,
+            num_iter=self.config.manifold.ode_solver.iter,
+            max_iter=self.config.manifold.ode_solver.max_iter,
+            ref_dt=self.config.manifold.ode_solver.ref_dt,
+            min_dt=self.config.manifold.ode_solver.min_dt,
+            max_dt=self.config.manifold.ode_solver.max_dt,
+            err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+            verbose=0,
+            method="Heun",
+            pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+            pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+        )
+
+        batch_pos_noise = last["x"]  # (B, n, 3)
+        batch_x_dot = last["x_dot"]  # (B, n, 3)
+        unbatch_node_mask = _masking(num_nodes)
+        pos_noise = batch_pos_noise.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
+        x_dot = batch_x_dot.reshape(-1, 3)[unbatch_node_mask]  # (N, 3)
+
+        batch_q_dot = last["q_dot"]  # (B, e)
+        batch_q_init = init["q"]  # (B, e)
+        e = batch_q_dot.size(1)
+        unbatch_edge_index = index_tensor[1] + index_tensor[0] * e
+        q_dot = batch_q_dot.reshape(-1)[unbatch_edge_index]  # (E, )
+        q_init = batch_q_init.reshape(-1)[unbatch_edge_index]  # (E, )
+
+        # Check stability, percent error > threshold, then re-solve
+        retry_index = stats["ban_index"].sort().values
+        if len(retry_index) > 0:
+            node_select = torch.isin(node2graph, retry_index)
+            edge_select = torch.isin(edge2graph, retry_index)
+            # _batch = torch.arange(len(retry_index), device=mean.device).repeat_interleave(num_nodes[retry_index])
+            _batch = torch.arange(len(retry_index), device=pos.device).repeat_interleave(num_nodes[retry_index])
+            _num_nodes = num_nodes[retry_index]
+            _num_edges = _num_nodes * (_num_nodes - 1) // 2
+            _ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=_num_nodes.device), _num_nodes.cumsum(0)])
+            _full_edge = index_tensor[2:][:, edge_select] + _ptr[:-1].repeat_interleave(_num_edges)
+
+            self.print(f"[Resolve] geodesic solver failed at {len(retry_index)}/{len(data)}, Retry...")
+            _init, _last, _iter, _index_tensor, _stats = self.geodesic_solver.batch_geodesic_ode_solve(
+                pos[node_select],
+                q_noise[edge_select],
+                _full_edge,
+                atom_type[node_select],
+                _batch,
+                _num_nodes,
+                q_type=self.q_type,
+                num_iter=self.config.manifold.ode_solver.iter,
+                max_iter=self.config.manifold.ode_solver.max_iter,
+                ref_dt=self.config.manifold.ode_solver._ref_dt,
+                min_dt=self.config.manifold.ode_solver._min_dt,
+                max_dt=self.config.manifold.ode_solver._max_dt,
+                err_thresh=self.config.manifold.ode_solver.vpae_thresh,
+                verbose=0,
+                method="RK4",
+                pos_adjust_scaler=self.config.manifold.ode_solver.pos_adjust_scaler,
+                pos_adjust_thresh=self.config.manifold.ode_solver.pos_adjust_thresh,
+            )
+
+            _batch_pos_noise = _last["x"]  # (b, n', 3)
+            _batch_x_dot = _last["x_dot"]  # (b, n', 3)
+            _unbatch_node_mask = _masking(_num_nodes)
+            _pos_noise = _batch_pos_noise.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+            _x_dot = _batch_x_dot.reshape(-1, 3)[_unbatch_node_mask]  # (N', 3)
+
+            _batch_q_dot = _last["q_dot"]  # (b, e')
+            _e = _batch_q_dot.size(1)
+            _unbatch_edge_index = _index_tensor[1] + _index_tensor[0] * _e
+            _q_dot = _batch_q_dot.reshape(-1)[_unbatch_edge_index]  # (E', )
+
+            pos_noise[node_select] = _pos_noise
+            x_dot[node_select] = _x_dot
+            q_dot[edge_select] = _q_dot
+
+            ban_index = _stats["ban_index"].sort().values
+            ban_index = retry_index[ban_index]
+        else:
+            ban_index = torch.LongTensor([])
+
+        # coeff = torch.ones_like(tt)
+        # coeff_node = coeff.index_select(0, node2graph)  # (N, )
+        # coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
+        # target_x = - x_dot * coeff_node.unsqueeze(-1)
+        # target_q = - q_dot * coeff_edge
+        target_x = - x_dot
+        target_q = - q_dot
+
+        if len(ban_index) > 0:
+            ban_index = ban_index.to(torch.long)
+            # rxn_idx = [data.rxn_idx[i] for i in ban_index]
+            idx = [data.idx[i] for i in ban_index]
+            # self.print(f"\n[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}"
+            #             f"\n\tidx: {idx}\n\ttime index: {t_index[ban_index].tolist()}")
+            #             # f"\n\trxn_idx: {rxn_idx}\n\ttime index: {t_index[ban_index].tolist()}")
+            self.print(f"\n[Warning] geodesic solver failed at {len(ban_index)}/{len(data)}\n\tidx: {idx}")
+            ban_node_mask = torch.isin(node2graph, ban_index)
+            ban_edge_mask = torch.isin(edge2graph, ban_index)
+            # ban_batch_mask = torch.isin(torch.arange(len(data), device=mean.device), ban_index)
+            ban_batch_mask = torch.isin(torch.arange(len(data), device=pos.device), ban_index)
+
+            data = Batch.from_data_list(data[~ban_batch_mask])
+            graph = self.graph.from_batch(data)
+
+            pos_noise = pos_noise[~ban_node_mask]
+            # x_dot = x_dot[~ban_node_mask]
+            # pos_init = pos_init[~ban_node_mask]
+            # tt = tt[~ban_batch_mask]
+            time_step = time_step[~ban_batch_mask]
+            target_x = target_x[~ban_node_mask]
+            target_q = target_q[~ban_edge_mask]
+
+        pos_noise = center_pos(pos_noise, data.batch)
+        # return pos_noise, target_x, target_q
+        return pos_noise, target_x, target_q, graph, time_step
 
     def configure_optimizers(self):
         ## Set optimizer and scheduler
@@ -939,13 +1124,24 @@ class BridgeDiffusion(pl.LightningModule):
             #################################################
             if debug:
                 ## Calculate reference score
-                d_gt = get_distance(batch.pos[:, 0, :], edge_index).unsqueeze(-1)
-                edge_length = get_distance(pos, edge_index).unsqueeze(-1)
-                d_perturbed = edge_length
-                d_target = (d_gt - d_perturbed) / sigmas[i]
+
+                # d_gt = get_distance(batch.pos[:, 0, :], edge_index).unsqueeze(-1)
+                # edge_length = get_distance(pos, edge_index).unsqueeze(-1)
+                # d_perturbed = edge_length
+                # d_target = (d_gt - d_perturbed) / sigmas[i]
+
                 # sigmas_edge = sigmas[i].index_select(0, edge2graph).unsqueeze(-1)
                 # d_target = (d_gt - d_perturbed) / sigmas_edge
-                pos_target = eq_transform(d_target, pos, edge_index, edge_length)
+                # pos_target = eq_transform(d_target, pos, edge_index, edge_length)
+
+                pos_0 = batch.pos[:, 0, :]
+                q_gt = self.geodesic_solver.compute_d_or_q(pos_0, dynamic_graph.atom_type, edge_index, q_type=self.q_type)
+                q_t = self.geodesic_solver.compute_d_or_q(pos, dynamic_graph.atom_type, edge_index, q_type=self.q_type)
+                d_target = (q_gt - q_t) / sigmas[i]
+                pos_target = (pos_0 - pos) / sigmas[i]
+                pos_target, d_target = self.transform(
+                    pos_target, d_target, pos, dynamic_graph.atom_type, edge_index, node2graph, num_nodes, self.q_type,
+                )
                 rmsd = torch.sqrt(scatter_mean(torch.sum((pos_target - node_eq) ** 2, dim=-1), node2graph))
                 denom = torch.sqrt(scatter_mean(torch.sum(pos_target ** 2, dim=-1), node2graph))
                 pred_size = torch.sqrt(scatter_mean(torch.sum(node_eq ** 2, dim=-1), node2graph))
@@ -1603,9 +1799,6 @@ class BridgeDiffusion(pl.LightningModule):
         return dq
 
 
-# def align(pos, pos_ref):
-#     pass
-
 def center_pos(pos, batch):
     pos_center = pos - scatter_mean(pos, batch, dim=0)[batch]
     return pos_center
@@ -1615,3 +1808,31 @@ def clip_norm(vec, limit, p=2):
     norm = torch.norm(vec, dim=-1, p=2, keepdim=True)
     denom = torch.where(norm > limit, limit / norm, torch.ones_like(norm))
     return vec * denom
+
+
+def align_geom_batch(refgeom, geom, batch):
+    refgeom_list = refgeom.split(list(batch.bincount()))
+    geom_list = geom.split(list(batch.bincount()))
+
+    aligned_geom_list = []
+    aligned_rmsd = []
+    for g1, g2 in zip(refgeom_list, geom_list):
+        rmsd, new_g2 = align_geom(g1, g2)
+        aligned_geom_list.append(new_g2)
+        aligned_rmsd.append(rmsd)
+    return torch.cat(aligned_geom_list)
+
+
+def align_geom(refgeom, geom):
+    center = refgeom.mean(dim=0)
+    ref2 = refgeom - center
+    geom2 = geom - geom.mean(dim=0)
+    cov = geom2.T @ ref2
+    v, sv, w = torch.linalg.svd(cov)
+    if torch.linalg.det(v) * torch.linalg.det(w) < 0:
+        sv[-1] = -sv[-1]
+        v[:, -1] = -v[:, -1]
+    u = v @ w
+    new_geom = geom2 @ u + center
+    rmsd = (new_geom - refgeom).square().mean().sqrt()
+    return rmsd, new_geom

@@ -19,7 +19,6 @@ print(args)
 
 import torch
 import numpy as np
-import pickle
 from ase import Atoms
 from ase.build.rotate import minimize_rotation_and_translation
 from math import sqrt
