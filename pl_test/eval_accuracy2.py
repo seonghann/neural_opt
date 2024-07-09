@@ -31,7 +31,9 @@ def remap2atomic_numbers(atomic_numbers):
 
 
 def calc_RMSD(pos1, pos2):
-    return sqrt(((pos1 - pos2) ** 2).sum() / len(pos1))
+    # return sqrt(((pos1 - pos2) ** 2).sum() / len(pos1))
+    rmsd = np.sqrt(np.mean(np.sum((pos1 - pos2) ** 2, axis=1)))
+    return rmsd
 
 
 def get_min_rmsd_match(matches, ref_atoms, prb_atoms):

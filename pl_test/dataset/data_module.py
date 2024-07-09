@@ -192,6 +192,11 @@ class GrambowDataset(InMemoryDataset):
             ]
             geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
 
+            if "time_step" in atoms.info:
+                time_step = torch.tensor(atoms.info["time_step"])
+            else:
+                time_step = None
+
             data = Data(
                 x=atom_type,
                 pos=pos,
@@ -204,6 +209,7 @@ class GrambowDataset(InMemoryDataset):
                 idx=idx,
                 rxn_smarts=rxn_smarts,
                 geodesic_length=geodesic_length,
+                time_step=time_step,
             )
             data_list.append(data)
         torch.save(self.collate(data_list), self.processed_paths[self.file_idx])
@@ -349,6 +355,11 @@ class QM9Dataset(InMemoryDataset):
             ]
             geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
 
+            if "time_step" in atoms.info:
+                time_step = torch.tensor(atoms.info["time_step"])
+            else:
+                time_step = None
+
             data = Data(
                 x=atom_type,
                 pos=pos,
@@ -358,6 +369,7 @@ class QM9Dataset(InMemoryDataset):
                 idx=idx,
                 smarts=smarts,
                 geodesic_length=geodesic_length,
+                time_step=time_step,
             )
             data_list.append(data)
         torch.save(self.collate(data_list), self.processed_paths[self.file_idx])

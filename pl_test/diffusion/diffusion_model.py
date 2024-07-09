@@ -215,6 +215,8 @@ class BridgeDiffusion(pl.LightningModule):
             )
         elif self.config.train.noise_type == "diffusion_riemannian":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_riemannian(data)
+        elif self.config.train.noise_type == "diffusion_geodesic":
+            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_geodesic(data)
         elif self.config.train.noise_type == "ddbm_h_transform":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_ddbm(
                 data,
@@ -396,6 +398,46 @@ class BridgeDiffusion(pl.LightningModule):
         # pos_t = center_pos(pos_t, data.batch)
 
         return graph, pos_t, pos_t, time_step, pos_target, q_target
+
+    def apply_noise_diffusion_geodesic(self, data):
+        graph = self.graph.from_batch(data)
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        pos = data.pos[:, 0]
+        pos_t = data.pos[:, -1]
+        pos_tm1 = data.pos[:, -2]
+        device = pos.device
+
+        ## calculate q_dot
+        g_last_length = data.geodesic_length[:, -1:]
+        g_segment = g_last_length - data.geodesic_length[:, -2:-1]
+        ratio = g_last_length / g_segment
+
+        # time_step = data.time_step
+
+        q_t = self.geodesic_solver.compute_d_or_q(pos_t, graph.atom_type, edge_index, q_type=self.q_type)
+        q_tm1 = self.geodesic_solver.compute_d_or_q(pos_tm1, graph.atom_type, edge_index, q_type=self.q_type)
+
+        ratio_edge = ratio.index_select(0, edge2graph).squeeze(-1)
+        ratio_node = ratio.index_select(0, node2graph)
+        q_target = (q_tm1 - q_t) * ratio_edge
+        pos_target = (pos_tm1 - pos_t) * ratio_node
+
+        pos_target, q_target = self.transform(
+            pos_target,
+            q_target,
+            pos_t,
+            graph.atom_type,
+            edge_index,
+            node2graph,
+            num_nodes,
+            self.q_type,
+        )
+        return graph, pos_t, pos_t, data.time_step, pos_target, q_target
 
     def apply_straight_to_x0(self, data, do_scale=False):
         """No noised version. (straight line approximation.)"""
