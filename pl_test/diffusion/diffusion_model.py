@@ -216,7 +216,8 @@ class BridgeDiffusion(pl.LightningModule):
         elif self.config.train.noise_type == "diffusion_riemannian":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_riemannian(data)
         elif self.config.train.noise_type == "diffusion_geodesic":
-            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_geodesic(data)
+            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_geodesic(data, use_traj=False)
+            # graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_geodesic(data, use_traj=True)
         elif self.config.train.noise_type == "ddbm_h_transform":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_ddbm(
                 data,
@@ -277,7 +278,7 @@ class BridgeDiffusion(pl.LightningModule):
     def get_loss_weight(
         self,
         time_step: torch.Tensor,
-    ):
+    ) -> torch.Tensor:
         """weight of loss at eact time step (\lambda(t))"""
         loss_weight_type = self.config.train.loss_weight
         if loss_weight_type == "diffusion":
@@ -288,6 +289,8 @@ class BridgeDiffusion(pl.LightningModule):
             weight = 1 / sigma2.square()
         elif loss_weight_type == "cfm":
             weight = 1 / time_step.square()
+        elif loss_weight_type == "q_norm":  # TODO: to do implementation
+            raise NotImplementedError()
         else:
             weight = None
         return weight
@@ -320,8 +323,8 @@ class BridgeDiffusion(pl.LightningModule):
         a_pos = a.index_select(0, node2graph).unsqueeze(-1)
         pos_noise = torch.randn(size=pos.size(), device=device)
         pos_t = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
-        # pos_t = center_pos(pos_t, data.batch)
-        pos_t = align_geom_batch(pos, pos_t, data.batch)
+        pos_t = center_pos(pos_t, data.batch)
+        # pos_t = align_geom_batch(pos, pos_t, data.batch)
 
         a_edge = a.index_select(0, edge2graph)
 
@@ -330,7 +333,6 @@ class BridgeDiffusion(pl.LightningModule):
         q_t = self.geodesic_solver.compute_d_or_q(pos_t, graph.atom_type, edge_index, q_type=self.q_type)
         d_target = q_gt - q_t
 
-        ## NOTE: pos_target is set to pos - pos_t (아래 주석 처리.)
         pos_target, d_target = self.transform(
             pos_target,
             d_target,
@@ -341,7 +343,6 @@ class BridgeDiffusion(pl.LightningModule):
             num_nodes,
             self.q_type,
         )
-        ## NOTE: pos_target is set to pos - pos_t
 
         if do_scale:
             assert self.q_type == "DM"
@@ -399,7 +400,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         return graph, pos_t, pos_t, time_step, pos_target, q_target
 
-    def apply_noise_diffusion_geodesic(self, data):
+    def apply_xT_to_x0(self, data):
         graph = self.graph.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
@@ -408,14 +409,55 @@ class BridgeDiffusion(pl.LightningModule):
         num_nodes = data.ptr[1:] - data.ptr[:-1]
 
         pos = data.pos[:, 0]
-        pos_t = data.pos[:, -1]
-        pos_tm1 = data.pos[:, -2]
+        pos_T = data.pos[:, -1]
         device = pos.device
 
+        q_0 = self.geodesic_solver.compute_d_or_q(pos, graph.atom_type, edge_index, q_type=self.q_type)
+        q_T = self.geodesic_solver.compute_d_or_q(pos_T, graph.atom_type, edge_index, q_type=self.q_type)
+
+        q_target = q_0 - q_T
+        pos_target = pos - pos_T
+
+        pos_target, q_target = self.transform(
+            pos_target,
+            q_target,
+            pos_T,
+            graph.atom_type,
+            edge_index,
+            node2graph,
+            num_nodes,
+            self.q_type,
+        )
+        t0 = self.config.diffusion.scheduler.t0
+        t1 = self.config.diffusion.scheduler.t1
+        batch_size = len(data.geodesic_length)
+        time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
+        return graph, pos_T, pos_T, time_step, pos_target, q_target
+
+    def apply_noise_diffusion_geodesic(self, data, use_traj=False):
+        graph = self.graph.from_batch(data)
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        device = data.pos.device
+
+        if use_traj:
+            num_traj = data.geodesic_length.shape[-1]
+            i_traj = torch.randint(1, num_traj, size=(1,)).item()
+        else:
+            i_traj = -1
+
+        pos = data.pos[:, 0]
+        pos_t = data.pos[:, i_traj]
+        pos_tm1 = data.pos[:, i_traj - 1]
+
         ## calculate q_dot
-        g_last_length = data.geodesic_length[:, -1:]
-        g_segment = g_last_length - data.geodesic_length[:, -2:-1]
-        ratio = g_last_length / g_segment
+        g_last_length = data.geodesic_length[:, i_traj]
+        g_segment = data.geodesic_length[:, i_traj] - data.geodesic_length[:, i_traj - 1]
+        ratio = (g_last_length / g_segment).unsqueeze(-1)
 
         # time_step = data.time_step
 
@@ -1281,9 +1323,8 @@ class BridgeDiffusion(pl.LightningModule):
         node2graph = batch.batch
 
         pos = batch.pos[:, -1, :]
-        pos_init = batch.pos[:, -1, :]
         pos = center_pos(pos, batch.batch)
-        pos_init = center_pos(pos_init, batch.batch)
+        pos_init = pos.clone()
 
         # t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin # (G, )
         t = torch.ones(batch.num_graphs, device=pos.device)

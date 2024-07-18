@@ -4,19 +4,9 @@ Evaluate accuracy of generated geometries
 (Usage)
     >>> python eval_accuracy2.py \
     --config_yaml configs/sampling.h.condensed2.yaml \
-    --prb_pt save_dynamic.pt
+    --prb_pt save_dynamic.pt \
     --align_target DMAE
 """
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--config_yaml", type=str)
-parser.add_argument("--prb_pt", type=str)
-parser.add_argument("--align_target", type=str, default="DMAE", choices=["DMAE", "RMSD", "none"])
-args = parser.parse_args()
-print(args)
-###########################################################################
-
 import torch
 import numpy as np
 from ase import Atoms
@@ -102,7 +92,7 @@ def align_jhwoo(
     prb_atoms,
     # ref_smarts,
     # prb_smarts,
-    smiles,
+    smarts,
     silent = False,
     target = "RMSD",
 ):
@@ -112,7 +102,7 @@ def align_jhwoo(
     # from alignXYZ import get_substruct_matches, get_min_dmae_match
     from alignXYZ import get_min_dmae_match
 
-    matches = get_substruct_matches(smiles)
+    matches = get_substruct_matches(smarts)
 
     ref_pos = ref_atoms.positions
     prb_pos = prb_atoms.positions
@@ -126,7 +116,7 @@ def align_jhwoo(
 
     if not silent:
         if abs(init_target - final_target) > 1e-5:
-            print(f"[{i}]: {init_target} -> {final_target}")
+            print(f"[{i}]: {init_target} > {final_target}")
         else:
             print(f"[{i}]: {final_target}")
 
@@ -155,6 +145,17 @@ def calc_q_norm(solver, pos_ref, pos_prb, atom_type):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_yaml", type=str)
+    parser.add_argument("--prb_pt", type=str)
+    parser.add_argument("--align_target", type=str, default="none", choices=["DMAE", "RMSD", "none"])
+    parser.add_argument("--save_dir", type=str, required=False, default="", help="save xyz files")
+    args = parser.parse_args()
+    print(args)
+    ###########################################################################
+
     ###########################################################################
     ## Load reference pos
     from dataset.data_module import load_datamodule
@@ -166,10 +167,13 @@ if __name__ == "__main__":
         print(f"Debug: batch.idx={batch.idx}")
 
     pos_ref_list = []
+    data_idx_list = []
     for batch in datamodule.test_dataloader():
         natoms = batch.batch.bincount()
         pos_ref = batch.pos[:, 0, :].split(natoms.tolist())
         pos_ref_list.extend(pos_ref)
+
+        data_idx_list.extend(batch.idx)
     ###########################################################################
 
 
@@ -210,14 +214,14 @@ if __name__ == "__main__":
     dmae_list = []
     rmsd_list_xT = []
     dmae_list_xT = []
-    q_norm_list = []  # TODO:
-    q_norm_list_xT = []  # TODO:
+    q_norm_list = []
+    q_norm_list_xT = []
  
     # for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)): 
     for i, (pos_ref, pos_gen, xT) in enumerate(zip(pos_ref_list, pos_list, xT_list)): 
         _atom_type = atom_type_list[i]
 
-        smiles = smarts_list[i]
+        smarts = smarts_list[i]
 
         atom_type = remap2atomic_numbers(_atom_type)
         atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
@@ -225,8 +229,8 @@ if __name__ == "__main__":
         atoms_xT = Atoms(symbols=atom_type, positions=xT)
 
         if args.align_target.lower() != "none":
-            pos_gen = align_jhwoo(atoms_ref, atoms_gen, smiles, target=args.align_target)
-            xT = align_jhwoo(atoms_ref, atoms_xT, smiles, target=args.align_target)
+            pos_gen = align_jhwoo(atoms_ref, atoms_gen, smarts, target=args.align_target)
+            xT = align_jhwoo(atoms_ref, atoms_xT, smarts, target=args.align_target)
             atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
             atoms_xT = Atoms(symbols=atom_type, positions=xT)
 
@@ -247,7 +251,7 @@ if __name__ == "__main__":
         q_norm_list_xT.append(q_norm_xT)
 
         # print(f"it={i}: rmsd={rmsd}, dmae={dmae}")
-        print(f"it={i}: rmsd={rmsd_xT}->{rmsd}, dmae={dmae_xT}->{dmae}, q_norm={q_norm_xT}->{q_norm}")
+        print(f"it: {i}, data_idx: {data_idx_list[i]}, rmsd: {rmsd_xT} > {rmsd}, dmae: {dmae_xT} > {dmae}, q_norm: {q_norm_xT} > {q_norm}")
 
     rmsd_list = torch.tensor(rmsd_list)
     dmae_list = torch.tensor(dmae_list)
@@ -256,9 +260,13 @@ if __name__ == "__main__":
     q_norm_list = torch.tensor(q_norm_list)
     q_norm_list_xT = torch.tensor(q_norm_list_xT)
 
+    print(f"x0 vs predicted")
     print(f"dmae_list.sort()[0]=\n{dmae_list.sort()[0]}")
     print(f"rmsd_list.sort()[0]=\n{rmsd_list.sort()[0]}")
     print(f"q_norm_list.sort()[0]=\n{q_norm_list.sort()[0]}")
+    print(f"dmae_list=\n{dmae_list}")
+    print(f"rmsd_list=\n{rmsd_list}")
+    print(f"q_norm_list=\n{q_norm_list}")
     print(f"RMSD (mean  ): {rmsd_list.mean()}")
     print(f"DMAE (mean  ): {dmae_list.mean()}")
     print(f"q_norm (mean  ): {q_norm_list.mean()}")
@@ -267,10 +275,14 @@ if __name__ == "__main__":
     print(f"q_norm (median): {q_norm_list.median()}")
 
 
-    print(f"xT")
+    print("=" * 100)
+    print(f"x0 vs xT")
     print(f"dmae_list_xT.sort()[0]=\n{dmae_list_xT.sort()[0]}")
     print(f"rmsd_list_xT.sort()[0]=\n{rmsd_list_xT.sort()[0]}")
     print(f"q_norm_list_xT.sort()[0]=\n{q_norm_list_xT.sort()[0]}")
+    print(f"dmae_list_xT=\n{dmae_list_xT}")
+    print(f"rmsd_list_xT=\n{rmsd_list_xT}")
+    print(f"q_norm_list_xT=\n{q_norm_list_xT}")
     print(f"RMSD (mean  ): {rmsd_list_xT.mean()}")
     print(f"DMAE (mean  ): {dmae_list_xT.mean()}")
     print(f"q_norm (mean  ): {q_norm_list_xT.mean()}")
@@ -278,3 +290,28 @@ if __name__ == "__main__":
     print(f"DMAE (median): {dmae_list_xT.median()}")
     print(f"q_norm (median): {q_norm_list_xT.median()}")
     ###########################################################################
+
+    if args.save_dir:
+        import os
+
+        os.mkdir(args.save_dir)
+        print(f"mkdir {args.save_dir}")
+        for i, (pos_ref, pos_gen, xT) in enumerate(zip(pos_ref_list, pos_list, xT_list)):
+            idx = data_idx_list[i]
+
+            _atom_type = atom_type_list[i]
+
+            smarts = smarts_list[i]
+            atom_type = remap2atomic_numbers(_atom_type)
+
+            # atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
+            atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
+            # atoms_xT = Atoms(symbols=atom_type, positions=xT)
+
+            # comment = f"DFT(B3LYP/6-31G(2df,p)) idx={idx} GeodesicLength=0.0 smarts=\"{smarts}\""
+            comment = f"idx={idx} smarts=\"{smarts}\" rmsd={rmsd_list[i]} dmae={dmae_list[i]} q_norm={q_norm_list[i]}"
+            filename = f"./{args.save_dir}/idx{idx}.xyz"
+            atoms_gen.write(filename, comment=comment)
+            print(f"Save {filename}")
+
+            # if i == 3: exit("DEBUG")
