@@ -69,12 +69,20 @@ if __name__ == '__main__':
         )
         checkpoint_callback_perr = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
-            filename='{epoch}-{valid/rmsd_perr:.3f}',
-            monitor="valid/rmsd_perr",
+            filename='{epoch}-{valid/norm_perr:.3f}',
+            monitor="valid/norm_perr",
             save_top_k=5,
             mode='min',
             every_n_epochs=1,
         )
+        # checkpoint_callback_perr = ModelCheckpoint(
+        #     dirpath=f"checkpoints/{config.general.name}",
+        #     filename='{epoch}-{valid/rmsd_perr:.3f}',
+        #     monitor="valid/rmsd_perr",
+        #     save_top_k=5,
+        #     mode='min',
+        #     every_n_epochs=1,
+        # )
         last_ckpt_save = ModelCheckpoint(
             dirpath=f"checkpoints/{config.general.name}",
             filename='last',

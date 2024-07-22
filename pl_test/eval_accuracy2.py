@@ -267,12 +267,9 @@ if __name__ == "__main__":
     print(f"dmae_list=\n{dmae_list}")
     print(f"rmsd_list=\n{rmsd_list}")
     print(f"q_norm_list=\n{q_norm_list}")
-    print(f"RMSD (mean  ): {rmsd_list.mean()}")
-    print(f"DMAE (mean  ): {dmae_list.mean()}")
-    print(f"q_norm (mean  ): {q_norm_list.mean()}")
-    print(f"RMSD (median): {rmsd_list.median()}")
-    print(f"DMAE (median): {dmae_list.median()}")
-    print(f"q_norm (median): {q_norm_list.median()}")
+    print(f"RMSD   (mean, median): {rmsd_list.mean()}, {rmsd_list.median()}")
+    print(f"DMAE   (mean, median): {dmae_list.mean()}, {dmae_list.median()}")
+    print(f"q_norm (mean, median): {q_norm_list.mean()}, {q_norm_list.median()}")
 
 
     print("=" * 100)
@@ -283,12 +280,9 @@ if __name__ == "__main__":
     print(f"dmae_list_xT=\n{dmae_list_xT}")
     print(f"rmsd_list_xT=\n{rmsd_list_xT}")
     print(f"q_norm_list_xT=\n{q_norm_list_xT}")
-    print(f"RMSD (mean  ): {rmsd_list_xT.mean()}")
-    print(f"DMAE (mean  ): {dmae_list_xT.mean()}")
-    print(f"q_norm (mean  ): {q_norm_list_xT.mean()}")
-    print(f"RMSD (median): {rmsd_list_xT.median()}")
-    print(f"DMAE (median): {dmae_list_xT.median()}")
-    print(f"q_norm (median): {q_norm_list_xT.median()}")
+    print(f"RMSD   (mean, median): {rmsd_list_xT.mean()}, {rmsd_list_xT.median()}")
+    print(f"DMAE   (mean, median): {dmae_list_xT.mean()}, {dmae_list_xT.median()}")
+    print(f"q_norm (mean, median): {q_norm_list_xT.mean()}, {q_norm_list_xT.median()}")
     ###########################################################################
 
     if args.save_dir:

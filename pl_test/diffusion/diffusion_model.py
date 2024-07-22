@@ -1,7 +1,7 @@
 import time
 
 import torch
-from torch_scatter import scatter_mean
+from torch_scatter import scatter_mean, scatter_sum
 from torch_geometric.data import Batch
 import pytorch_lightning as pl
 
@@ -29,6 +29,7 @@ def _masking(num_nodes):
     return mask
 
 
+## TODO: Rename BridgeDiffusion class (e.g., UnifiedDiffusionModel, IntegratedDiffusionFramework)
 class BridgeDiffusion(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -132,7 +133,18 @@ class BridgeDiffusion(pl.LightningModule):
         exit("DEBUG: transform_test")
         return
 
-    def transform(self, score_x, score_q, pos, atom_type, edge_index, batch, num_nodes, q_type):
+    def transform(
+        self,
+        score_x,
+        score_q,
+        pos,
+        atom_type,
+        edge_index,
+        batch,
+        num_nodes,
+        q_type,
+        rescale_dq=True,  # rescale to have the same length with the input score_q
+    ):
         transform_type = self.config.train.transform
 
         assert transform_type in ["eq_transform", "projection_dx2dq", "projection_dq2dx", None]
@@ -150,6 +162,10 @@ class BridgeDiffusion(pl.LightningModule):
             # assert self.pred_type == "edge"
             assert self.pred_type == "edge" or not self.config.train.transform_at_forward
 
+            if rescale_dq:
+                edge2graph = batch.index_select(0, edge_index[0])
+                norm_q = scatter_sum(score_q.square(), edge2graph).sqrt()
+
             score_q = self.geodesic_solver.batch_projection(
                 score_q,
                 pos,
@@ -160,15 +176,22 @@ class BridgeDiffusion(pl.LightningModule):
                 q_type=q_type,
                 proj_type="manifold",
             )
-            score_x = self.geodesic_solver.batch_dq2dx(
-                score_q,
-                pos,
-                atom_type,
-                edge_index,
-                batch,
-                num_nodes,
-                q_type=q_type,
-            ).reshape(-1, 3)
+            if rescale_dq:
+                norm_q_new = scatter_sum(score_q.square(), edge2graph).sqrt()
+                print(f"Debug: norm_q / norm_q_new (> 1.)={norm_q / norm_q_new}")
+                rescale = (norm_q / norm_q_new).index_select(0, edge2graph)
+                score_q *= rescale
+
+            if self.config.train.lambda_x_train:
+                score_x = self.geodesic_solver.batch_dq2dx(
+                    score_q,
+                    pos,
+                    atom_type,
+                    edge_index,
+                    batch,
+                    num_nodes,
+                    q_type=q_type,
+                ).reshape(-1, 3)
         elif transform_type == "projection_dx2dq":
             assert self.pred_type == "node"
 
@@ -272,6 +295,8 @@ class BridgeDiffusion(pl.LightningModule):
                 node2graph,
                 num_nodes,
                 self.q_type,
+                rescale_dq=False,
+                # rescale_dq=True,
             )
         return pred_x, pred_q, edge_index, node2graph, edge2graph
 
@@ -853,14 +878,16 @@ class BridgeDiffusion(pl.LightningModule):
         # print(to_log)
         loss = to_log["valid_epoch/loss"]
         # perr = to_log["valid_epoch/perr"]
-        perr = to_log["valid_epoch/pred_target_rmsd_perr"]
+        rmsd_perr = to_log["valid_epoch/pred_target_rmsd_perr"]
+        norm_perr = to_log["valid_epoch/pred_target_norm_perr"]
 
         if loss < self.best_valid_loss:
             self.best_valid_loss = loss
 
         self.log("valid/loss", loss, sync_dist=True)
         # self.log("valid/perr", perr, sync_dist=True)
-        self.log("valid/rmsd_perr", perr, sync_dist=True)
+        self.log("valid/rmsd_perr", rmsd_perr, sync_dist=True)
+        self.log("valid/norm_perr", norm_perr, sync_dist=True)
         self.val_counter += 1
         self.optim_scheduler.step(loss)
         msg = f"Epoch {self.current_epoch} "
@@ -1830,7 +1857,6 @@ class BridgeDiffusion(pl.LightningModule):
 
 
             ## Print h-term error
-            from torch_scatter import scatter_sum
             h_diff = (h_pred - h_ref) / h_coeff
             h_diff_norm = scatter_sum(h_diff.square(), edge2graph).sqrt()
             print(f"Debug: h_diff_norm={h_diff_norm}")

@@ -257,7 +257,13 @@ class SquareLoss(Metric):
         numel = square_err.numel()
         square_err = scatter_sum(square_err, merge)
         nbatch = square_err.numel()
-        # square_err = square_err.sqrt(); print(f"Debug: Using Norm error!!!! not norm square")
+
+        USE_NORM_ERROR = False
+        if USE_NORM_ERROR:  # NOTE: q_norm error를 사용.
+            assert self.name == "riemannian"
+            square_err = square_err.sqrt(); print(f"Debug: Using Norm error!!!! not norm square")
+            if weight is not None:
+                weight = weight.sqrt()
 
         state = self.__getstate__()
         if weight is not None:
@@ -301,10 +307,10 @@ class MetricRMSD(Metric):
         pred_size = torch.sqrt(scatter_mean(torch.sum(pred ** 2, dim=-1), merge))
 
         print(f"Debug: MetricRMSD.update ======================================")
-        print(f"Debug: rmsd={rmsd.detach()}")
-        print(f"Debug: pred_size={pred_size.detach()}")
-        print(f"Debug: denom={denom.detach()}")
-        print(f"Debug: perr={perr.detach()}")
+        # print(f"Debug: rmsd={rmsd.detach()}")
+        # print(f"Debug: pred_size={pred_size.detach()}")
+        # print(f"Debug: denom={denom.detach()}")
+        # print(f"Debug: perr={perr.detach()}")
         print(f"Debug: rmsd.mean()={rmsd.mean()}")
         print(f"Debug: pred_size={pred_size.mean()}")
         print(f"Debug: denom.mean()={denom.mean()}")
