@@ -198,6 +198,11 @@ class GrambowDataset(InMemoryDataset):
             else:
                 time_step = None
 
+            if "q_target" in atoms.info:
+                q_target = torch.from_numpy(atom.info["q_target"]).to(self.dtype)
+            else:
+                q_target = None
+
             data = Data(
                 x=atom_type,
                 pos=pos,
@@ -211,6 +216,7 @@ class GrambowDataset(InMemoryDataset):
                 rxn_smarts=rxn_smarts,
                 geodesic_length=geodesic_length,
                 time_step=time_step,
+                q_target=q_target,
             )
             data_list.append(data)
         torch.save(self.collate(data_list), self.processed_paths[self.file_idx])
@@ -361,6 +367,11 @@ class QM9Dataset(InMemoryDataset):
             else:
                 time_step = None
 
+            if "q_target" in atoms.info:
+                q_target = torch.from_numpy(atom.info["q_target"]).to(self.dtype)
+            else:
+                q_target = None
+
             data = Data(
                 x=atom_type,
                 pos=pos,
@@ -371,6 +382,7 @@ class QM9Dataset(InMemoryDataset):
                 smarts=smarts,
                 geodesic_length=geodesic_length,
                 time_step=time_step,
+                q_target=q_target,
             )
             data_list.append(data)
         torch.save(self.collate(data_list), self.processed_paths[self.file_idx])
