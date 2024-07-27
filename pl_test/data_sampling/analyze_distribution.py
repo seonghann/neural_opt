@@ -1,6 +1,7 @@
 """
 Calculate RMSD, DMAE, q_norm(geodesic length) and save it as csv file.
 """
+
 import torch
 from utils.chem import ATOMIC_NUMBERS
 
@@ -18,24 +19,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_yaml", type=str, required=True, help="config yaml file path"
     )
-    parser.add_argument(
-        "--save_csv", type=str, required=True, help="save as csv file"
-    )
+    parser.add_argument("--save_csv", type=str, required=True, help="save as csv file")
     parser.add_argument(
         "--mmff_xyz_path", type=str, required=True, help="path of mmff xyz files"
     )
-    parser.add_argument(
-        "--xyz_path", type=str, required=True, help="path of xyz files"
-    )
+    parser.add_argument("--xyz_path", type=str, required=True, help="path of xyz files")
     parser.add_argument(
         "--t0_x", type=int, default=0, help="t0 of time schedule (default: 0)"
     )
     parser.add_argument(
         "--t1_x", type=int, default=1500, help="t1 of time schedule (default: 1500)"
     )
-    parser.add_argument(
-        "--seed", type=int, default=42, help="random seed"
-    )
+    parser.add_argument("--seed", type=int, default=42, help="random seed")
     parser.add_argument(
         "--alpha",
         type=float,
@@ -73,7 +68,6 @@ if __name__ == "__main__":
     noise_schedule = load_noise_scheduler(config.diffusion)
     q_type = "morse"
 
-
     ## Read xyz
     ## Compare noise distributions
     from math import sqrt
@@ -87,7 +81,6 @@ if __name__ == "__main__":
 
     filenames = glob(f"{args.xyz_path}/*.xyz")
     print(f"Debug: filenames={filenames}")
-
 
     results = {
         "time_step_x": [],
@@ -165,7 +158,6 @@ if __name__ == "__main__":
         results["__rmsd"].append(rmsd)
         results["__dmae"].append(dmae)
         results["__q_norm"].append(q_norm)
-
 
     df = pd.DataFrame(results)
     df = df.sort_values(by="time_step_q")

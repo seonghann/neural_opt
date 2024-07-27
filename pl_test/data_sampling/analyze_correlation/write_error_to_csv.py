@@ -8,9 +8,12 @@ from ase.build.rotate import minimize_rotation_and_translation
 import numpy as np
 import torch
 
+# fmt: off
 ATOMIC_RADIUS = dict(H=0.31, He=0.28,
                      Li=1.28, Be=0.96, B=0.84, C=0.76, N=0.71, O=0.66, F=0.57, Ne=0.58,
                      Na=1.66, Mg=1.41, Al=1.21, Si=1.11, P=1.07, S=1.05, Cl=1.02, Ar=1.06)
+# fmt: on
+
 
 def get_rijlist_and_re(mol, threshold=np.inf):
     from scipy.spatial import KDTree
@@ -37,8 +40,9 @@ def compute_rij(geom, rij_list):
     bmat = np.zeros((nrij, len(geom), 3))
     for idx, (i, j) in enumerate(rij_list):
         dvec = geom[i] - geom[j]
-        rij[idx] = r = np.sqrt(dvec[0] * dvec[0] +
-                               dvec[1] * dvec[1] + dvec[2] * dvec[2])
+        rij[idx] = r = np.sqrt(
+            dvec[0] * dvec[0] + dvec[1] * dvec[1] + dvec[2] * dvec[2]
+        )
         grad = dvec / r
         bmat[idx, i] = grad
         bmat[idx, j] = -grad
@@ -63,14 +67,19 @@ def morse_scaler(re=1.5, alpha=1.7, beta=0.01, gamma=0.0):
         val3 = gamma * ratio
         dval = -alpha / re * val1 - val2 / x + gamma / re
         return val1 + val2 + val3, dval
+
     return scaler
+
 
 def get_morse_qij(mol, alpha=1.7, beta=0.01, gamma=0.0):
     rijlist, re = get_rijlist_and_re(mol)
     wij, _ = compute_wij(mol.positions, rijlist, morse_scaler(re, alpha, beta, gamma))
     return wij
 
-def calc_morse_error(mol1: ase.Atoms, mol2: ase.Atoms, norm: bool = True, alpha=1.7, beta=0.01, gamma=0.0):
+
+def calc_morse_error(
+    mol1: ase.Atoms, mol2: ase.Atoms, norm: bool = True, alpha=1.7, beta=0.01, gamma=0.0
+):
     assert mol1.get_chemical_symbols() == mol2.get_chemical_symbols()
     qij1 = get_morse_qij(mol1, alpha, beta, gamma)
     qij2 = get_morse_qij(mol2, alpha, beta, gamma)
@@ -91,14 +100,14 @@ def read_gaussian_com(file_path):
     elements = []
     positions = []
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
 
     # Skip Link 0 commands and route section
     idx = 0
-    while lines[idx].strip() and lines[idx].startswith('%'):
+    while lines[idx].strip() and lines[idx].startswith("%"):
         idx += 1
-    while lines[idx].strip() and lines[idx].startswith('#'):
+    while lines[idx].strip() and lines[idx].startswith("#"):
         idx += 1
 
     # Skip title section
@@ -121,7 +130,7 @@ def read_gaussian_com(file_path):
         elements.append(parts[0])
         positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
         idx += 1
- 
+
     atoms = Atoms(symbols=elements, positions=positions)
     return atoms
 
@@ -178,7 +187,12 @@ def get_min_q_norm_match(matches, ref_atoms, prb_atoms):
     for match in matches:
         prb_atoms.positions = prb_pos[list(match)].copy()
         q_norm = calc_morse_error(
-            ref_atoms, prb_atoms, norm=True, alpha=args.alpha, beta=args.beta, gamma=args.gamma,
+            ref_atoms,
+            prb_atoms,
+            norm=True,
+            alpha=args.alpha,
+            beta=args.beta,
+            gamma=args.gamma,
         )
         q_norms.append(q_norm)
     return list(matches[q_norms.index(min(q_norms))]), q_norms[0], min(q_norms)
@@ -232,11 +246,14 @@ if __name__ == "__main__":
     )
     parser.add_argument("--input_csv", type=str, help="input csv filepath")
     parser.add_argument("--output_csv", type=str, help="output csv filepath")
-    parser.add_argument("--dft_results_path1", type=str, help="dft results path (xyz of \tilde{x})")
-    parser.add_argument("--dft_results_path2", type=str, help="dft results path (xyz of x)")
+    parser.add_argument(
+        "--dft_results_path1", type=str, help="dft results path (xyz of \tilde{x})"
+    )
+    parser.add_argument(
+        "--dft_results_path2", type=str, help="dft results path (xyz of x)"
+    )
     args = parser.parse_args()
     print(args)
-
 
     import pandas as pd
 
@@ -246,7 +263,7 @@ if __name__ == "__main__":
     print(df)
 
     if args.error_type == "q_norm":
-        key = args.error_type.lower()+f"({args.alpha},{args.beta},{args.gamma})"
+        key = args.error_type.lower() + f"({args.alpha},{args.beta},{args.gamma})"
     else:
         key = args.error_type.lower()
     if key in df.keys():
@@ -268,7 +285,12 @@ if __name__ == "__main__":
             err = calc_DMAE(atoms_mmff.positions, atoms_dft.positions)
         elif args.error_type == "q_norm":
             err = calc_morse_error(
-                atoms_mmff, atoms_dft, norm=True, alpha=args.alpha, beta=args.beta, gamma=args.gamma
+                atoms_mmff,
+                atoms_dft,
+                norm=True,
+                alpha=args.alpha,
+                beta=args.beta,
+                gamma=args.gamma,
             )
         else:
             raise NotImplementedError()
@@ -278,10 +300,11 @@ if __name__ == "__main__":
 
     assert len(error_list) == len(df)
     if args.error_type == "q_norm":
-        df[args.error_type.lower()+f"({args.alpha},{args.beta},{args.gamma})"] = error_list
+        df[args.error_type.lower() + f"({args.alpha},{args.beta},{args.gamma})"] = (
+            error_list
+        )
     else:
         df[args.error_type.lower()] = error_list
-
 
     print(df)
     # save_file_path = "./qm9m.csv"

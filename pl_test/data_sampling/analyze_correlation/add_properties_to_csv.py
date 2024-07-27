@@ -1,12 +1,17 @@
 """
 Add dE and SMARTS information to csv file
 """
+
 import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_csv", type=str, help="input csv filepath")
 parser.add_argument("--output_csv", type=str, help="output csv filepath")
-parser.add_argument("--sdf_path", type=str, help="data sdf file path (needed to read smarts information)")
+parser.add_argument(
+    "--sdf_path",
+    type=str,
+    help="data sdf file path (needed to read smarts information)",
+)
 args = parser.parse_args()
 print(args)
 
@@ -21,7 +26,7 @@ print(df)
 
 
 ## Add energy difference (dE)
-df["dE"] = abs(df['DFT_energy'] - df['MMFF_energy']) * Hartree * mol / kcal
+df["dE"] = abs(df["DFT_energy"] - df["MMFF_energy"]) * Hartree * mol / kcal
 print(df)
 
 
@@ -30,6 +35,7 @@ print(df)
 def read_sdf(filename):
     suppl = Chem.SDMolSupplier(filename, removeHs=False)
     return [mol for mol in suppl if mol is not None]
+
 
 def mol_to_smarts(mol):
     for atom in mol.GetAtoms():

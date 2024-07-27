@@ -4,9 +4,10 @@ Riemannian data sampling for fine-tuning
 
 import numpy as np
 import torch
-from utils.rxn_graph import MolGraph#, RxnGraph
+from utils.rxn_graph import MolGraph  # , RxnGraph
 from torch_geometric.data import Batch
 import pandas as pd
+
 # import sys
 # sys.path.append("/home/jhwoo/jhwoo_backup/Projects/neural_opt/pl_test")
 
@@ -77,9 +78,9 @@ def ode_noise_sampling(
             node_select = torch.isin(node2graph, retry_index)
             edge_select = torch.isin(edge2graph, retry_index)
             # _batch = torch.arange(len(retry_index), device=mean.device).repeat_interleave(num_nodes[retry_index])
-            _batch = torch.arange(len(retry_index), device=pos.device).repeat_interleave(
-                num_nodes[retry_index]
-            )
+            _batch = torch.arange(
+                len(retry_index), device=pos.device
+            ).repeat_interleave(num_nodes[retry_index])
             _num_nodes = num_nodes[retry_index]
             _num_edges = _num_nodes * (_num_nodes - 1) // 2
             _ptr = torch.cat(
@@ -191,12 +192,15 @@ if __name__ == "__main__":
         help="config yaml file path",
     )
     parser.add_argument(
-        "--save_xyz", type=str, default=None, help="save path of samples' xyz files (default: None)"
+        "--save_xyz",
+        type=str,
+        default=None,
+        help="save path of samples' xyz files (default: None)",
     )
+    parser.add_argument("--save_csv", type=str, required=True, help="save as csv file")
     parser.add_argument(
-        "--save_csv", type=str, required=True, help="save as csv file"
+        "--seed", type=int, default=42, help="random seed (default: 42)"
     )
-    parser.add_argument("--seed", type=int, default=42, help="random seed (default: 42)")
     parser.add_argument(
         "--sampling_type",
         type=str,
@@ -234,7 +238,9 @@ if __name__ == "__main__":
         action="store_true",
         help="set retry=True in ode_noise_sampling",
     )
-    parser.add_argument("--dataloader", type=str, choices=["train", "val", "test"], default="test")
+    parser.add_argument(
+        "--dataloader", type=str, choices=["train", "val", "test"], default="test"
+    )
 
     args = parser.parse_args()
     print(args)
@@ -249,7 +255,6 @@ if __name__ == "__main__":
     from utils.geodesic_solver import GeodesicSolver
     from diffusion.noise_scheduler import load_noise_scheduler
     from eval_accuracy2 import remap2atomic_numbers
-
 
     if not os.path.exists(args.save_xyz):
         os.makedirs(args.save_xyz)
@@ -313,7 +318,9 @@ if __name__ == "__main__":
         ## Time sampling
         t0 = config.diffusion.scheduler.t0
         t1 = config.diffusion.scheduler.t1
-        time_step = torch.randint(max(t0, 1), t1, size=(batch_size,))  # , device=device)
+        time_step = torch.randint(
+            max(t0, 1), t1, size=(batch_size,)
+        )  # , device=device)
         print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
         a = noise_schedule.get_alpha(time_step)  # , device=device)
 
@@ -426,20 +433,22 @@ if __name__ == "__main__":
             a_edge = a.index_select(0, edge2graph)
             q_noise = torch.randn(size=(edge_index.size(1),))  # , device=device)
             q_noise *= (1.0 - a_edge).sqrt() / a_edge.sqrt()
-            pos_t, pos_target, q_target, graph, time_step, ban_index = ode_noise_sampling(
-                config,
-                geodesic_solver,
-                pos_0,
-                q_noise,
-                edge_index,
-                graph.atom_type,
-                node2graph,
-                edge2graph,
-                num_nodes,
-                data,
-                graph,
-                time_step,
-                retry=args.retry,
+            pos_t, pos_target, q_target, graph, time_step, ban_index = (
+                ode_noise_sampling(
+                    config,
+                    geodesic_solver,
+                    pos_0,
+                    q_noise,
+                    edge_index,
+                    graph.atom_type,
+                    node2graph,
+                    edge2graph,
+                    num_nodes,
+                    data,
+                    graph,
+                    time_step,
+                    retry=args.retry,
+                )
             )
 
             ## Masking failed cases
@@ -522,7 +531,9 @@ if __name__ == "__main__":
             # smarts = data.smarts
 
             for i in range(len(pos_0)):
-                filename = f"./{args.save_xyz}/idx{data_idx[i]}-{time_step[i].item()}.xyz"
+                filename = (
+                    f"./{args.save_xyz}/idx{data_idx[i]}-{time_step[i].item()}.xyz"
+                )
 
                 atom_type = remap2atomic_numbers(_atom_type[i])
 
@@ -538,7 +549,6 @@ if __name__ == "__main__":
                 atoms_pos_target.write(filename, comment=comment, append=True)
 
                 print(f"Save {filename}")
-
 
     ## Save perr info as csv file
     import pandas as pd

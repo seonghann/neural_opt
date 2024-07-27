@@ -15,6 +15,7 @@ print(args)
 # import sys
 import numpy as np
 import pandas as pd
+
 pd.options.display.max_rows = None
 
 
@@ -43,58 +44,61 @@ if not args.visualize:
 ## Plot distribution of RMSD, DMAE, and q-norm
 import matplotlib.pyplot as plt
 
+
 def plot_hist_with_gaussian(data, label, color, range, bin_edges=20):
     mu = np.mean(data)
     sigma = np.std(data)
-    n, bins, patches = plt.hist(data, bins=bin_edges, alpha=0.5, label=label, color=color, range=range)
-    y = ((1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-0.5 * ((bins - mu) / sigma)**2))
-    plt.plot(bins, y, '--', color=color, label=label)
+    n, bins, patches = plt.hist(
+        data, bins=bin_edges, alpha=0.5, label=label, color=color, range=range
+    )
+    y = (1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-0.5 * ((bins - mu) / sigma) ** 2)
+    plt.plot(bins, y, "--", color=color, label=label)
 
 
 # 데이터 로드
 # 히스토그램 그리기
 bins = 150
 figure1 = plt.figure(figsize=(12, 6))
-range_max = max(df[['rmsd', '_rmsd', '__rmsd']].max())
+range_max = max(df[["rmsd", "_rmsd", "__rmsd"]].max())
 # plt.hist(df['rmsd'], bins=bins, alpha=0.5, label='Cartesian noise', range=(0, range_max))
 # plt.hist(df['_rmsd'], bins=bins, alpha=0.5, label='Riemannian noise', range=(0, range_max))
 # plt.hist(df['__rmsd'], bins=bins, alpha=0.5, label='MMFF', range=(0, range_max))
-plot_hist_with_gaussian(df['rmsd'], 'Cartesian', 'blue', (0, range_max), bins)
-plot_hist_with_gaussian(df['_rmsd'], 'Riemannian', 'orange', (0, range_max), bins)
-plot_hist_with_gaussian(df['__rmsd'], 'MMFF', 'green', (0, range_max), bins)
+plot_hist_with_gaussian(df["rmsd"], "Cartesian", "blue", (0, range_max), bins)
+plot_hist_with_gaussian(df["_rmsd"], "Riemannian", "orange", (0, range_max), bins)
+plot_hist_with_gaussian(df["__rmsd"], "MMFF", "green", (0, range_max), bins)
 # 그래프 제목과 라벨 추가
-plt.title('RMSD Distribution Comparison')
-plt.xlabel('RMSD Value')
-plt.ylabel('Number of Samples')
-plt.legend(loc='upper right')
+plt.title("RMSD Distribution Comparison")
+plt.xlabel("RMSD Value")
+plt.ylabel("Number of Samples")
+plt.legend(loc="upper right")
 
 
 figure2 = plt.figure(figsize=(12, 6))
-range_max = max(df[['dmae', '_dmae', '__dmae']].max())
+range_max = max(df[["dmae", "_dmae", "__dmae"]].max())
 # plt.hist(df['dmae'], bins=bins, alpha=0.5, label='Cartesian noise', range=(0, range_max))
 # plt.hist(df['_dmae'], bins=bins, alpha=0.5, label='Riemannian noise', range=(0, range_max))
 # plt.hist(df['__dmae'], bins=bins, alpha=0.5, label='MMFF', range=(0, range_max))
-plot_hist_with_gaussian(df['dmae'], 'Cartesian', 'blue', (0, range_max), bins)
-plot_hist_with_gaussian(df['_dmae'], 'Riemannian', 'orange', (0, range_max), bins)
-plot_hist_with_gaussian(df['__dmae'], 'MMFF', 'green', (0, range_max), bins)
+plot_hist_with_gaussian(df["dmae"], "Cartesian", "blue", (0, range_max), bins)
+plot_hist_with_gaussian(df["_dmae"], "Riemannian", "orange", (0, range_max), bins)
+plot_hist_with_gaussian(df["__dmae"], "MMFF", "green", (0, range_max), bins)
 # 그래프 제목과 라벨 추가
-plt.title('DMAE Distribution Comparison')
-plt.xlabel('DMAE Value')
-plt.ylabel('Number of Samples')
-plt.legend(loc='upper right')
+plt.title("DMAE Distribution Comparison")
+plt.xlabel("DMAE Value")
+plt.ylabel("Number of Samples")
+plt.legend(loc="upper right")
 
 figure3 = plt.figure(figsize=(12, 6))
-range_max = max(df[['q_norm', '_q_norm', '__q_norm']].max())
+range_max = max(df[["q_norm", "_q_norm", "__q_norm"]].max())
 # plt.hist(df['q_norm'], bins=bins, alpha=0.5, label='Cartesian noise', range=(0, range_max))
 # plt.hist(df['_q_norm'], bins=bins, alpha=0.5, label='Riemannian noise', range=(0, range_max))
 # plt.hist(df['__q_norm'], bins=bins, alpha=0.5, label='MMFF', range=(0, range_max))
-plot_hist_with_gaussian(df['q_norm'], 'Cartesian', 'blue', (0, range_max), bins)
-plot_hist_with_gaussian(df['_q_norm'], 'Riemannian', 'orange', (0, range_max), bins)
-plot_hist_with_gaussian(df['__q_norm'], 'MMFF', 'green', (0, range_max), bins)
+plot_hist_with_gaussian(df["q_norm"], "Cartesian", "blue", (0, range_max), bins)
+plot_hist_with_gaussian(df["_q_norm"], "Riemannian", "orange", (0, range_max), bins)
+plot_hist_with_gaussian(df["__q_norm"], "MMFF", "green", (0, range_max), bins)
 # 그래프 제목과 라벨 추가
-plt.title('q_norm Distribution Comparison')
-plt.xlabel('q_norm Value')
-plt.ylabel('Number of Samples')
-plt.legend(loc='upper right')
+plt.title("q_norm Distribution Comparison")
+plt.xlabel("q_norm Value")
+plt.ylabel("Number of Samples")
+plt.legend(loc="upper right")
 # 그래프 보여주기
 plt.show()
