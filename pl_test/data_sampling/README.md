@@ -1,27 +1,16 @@
-Analyse the correlation b/w structural error and energy error.
+Riemannian manifold 위에서의 score 학습을 위한, 데이터 처리.
 
-- ./QM9M_SP_CALC: QM9M dataset의 MMFF 및 DFT 구조의 Gaussian 계산 결과.
-- ./QM9M_SP_CALC/QM9M_SP.csv: 계산된 energies를 csv 파일로 정리.
-- ./qm9m.csv: index, energies, structural erros등을 저장한 csv 파일.
-
-      # Make csv file containing dE, smarts information
-      $ python add_properties_to_csv.py --input_csv /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/QM9M_SP.csv --sdf_path /home/share/DATA/QM9M/sdf_files --output_csv ./qm9m.csv
+Files:
+  - ./riemannian_data_sampling.py: riemannian data sampling
+  - ./riemannian_data_sampling.yaml: riemannian data sampling에 필요한 config 파일.
 
 
-      # Add DMAE and RMSD information
-      $ python write_error_to_csv.py --error_type DMAE --input_csv ./qm9m.csv --output_csv ./qm9m.csv --dft_results_path1 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/MMFF --dft_results_path2 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/DFT
-      $ python write_error_to_csv.py --error_type RMSD --input_csv ./qm9m.csv --output_csv ./qm9m.csv --dft_results_path1 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/MMFF --dft_results_path2 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/DFT
+        # riemannian data sampling
+        $ python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 3.0 --beta 0.5 --svd_tol 1e-6 --t0 0 --t1 150 --save_xyz xyz_alpha3.0_beta0.5_gamma0.0_svdtol_1e-6_t150 --save_csv test.csv
 
 
-      # Remove wrong samples
-      $ python process_wrong_samples_from_csv.py --input_csv ./qm9m.csv --output_csv ./qm9m.csv
+        # Calculate RMSD, DMAE, q_norm of structures (riemannian sampled, cartesian sampled, MMFF structures with respect to DFT structures)
+        $ python analyze_distribution.py --config_yaml riemannian_data_sampling.yaml --save_csv test.csv --xyz_path xyz_alpha3.5_beta1.0_gamma0.0_svdtol_1e-6_t150 --t0_x 1 --t1_x 1500 --mmff_xyz_path /home/share/DATA/QM9M/MMFFtoDFT_input --alpha 3.5 --beta 1.0
 
-
-      # Add q_norm information corresponding alpha, beta, gamma values
-      $ python write_error_to_csv.py --error_type q_norm --input_csv ./qm9m.csv --output_csv ./qm9m.csv --dft_results_path1 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/MMFF --dft_results_path2 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/DFT --alpha 1.7 --beta 0.01
-      $ python write_error_to_csv.py --error_type q_norm --input_csv ./qm9m.csv --output_csv ./qm9m.csv --dft_results_path1 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/MMFF --dft_results_path2 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/DFT --alpha 3.0 --beta 0.5
-      $ ...
-
-
-      # Calculate correlation and visualization scatter plot
-      $ python calc_correlation.py --error_type q_norm --alpha 1.7 --beta 0.01 --input_csv ./qm9m.csv --visualize
+        # Visualize RMSD, DMAE, q_norm distribution
+        $ python plot_distribution.py --sampling_csv ./alpha3.0_beta0.5_gamma0.0_svdtol_1e-6_t150.sampling.csv --analyzing_csv ./alpha3.0_beta0.5_gamma0.0_svdtol_1e-6_t150.analyzing.csv
