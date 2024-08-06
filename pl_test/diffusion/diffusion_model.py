@@ -236,6 +236,8 @@ class BridgeDiffusion(pl.LightningModule):
                 data,
                 do_scale=self.config.train.do_scale,
             )
+        elif self.config.train.noise_type == "diffusion_custom":
+            graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_custom(data)
         elif self.config.train.noise_type == "diffusion_riemannian":
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_riemannian(data)
         elif self.config.train.noise_type == "diffusion_geodesic":
@@ -327,8 +329,7 @@ class BridgeDiffusion(pl.LightningModule):
         graph = self.graph.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
-        batch_size = len(data.geodesic_length)
-
+        batch_size = len(data.ptr) - 1
         node2graph = graph.batch
         edge2graph = node2graph.index_select(0, edge_index[0])
         num_nodes = data.ptr[1:] - data.ptr[:-1]
@@ -378,6 +379,30 @@ class BridgeDiffusion(pl.LightningModule):
 
         return graph, pos_t, pos_t, time_step, pos_target, d_target
 
+    def apply_noise_diffusion_custom(self, data):
+        """Using custom q_target, pos_target, and time_step from data"""
+        assert self.noise_schedule.name == "TSDiffNoiseScheduler"
+
+        graph = self.graph.from_batch(data)
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+
+        batch_size = len(data.ptr) - 1
+        node2graph = graph.batch
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        num_nodes = data.ptr[1:] - data.ptr[:-1]
+
+        pos = data.pos[:, 0]
+        pos = center_pos(pos, data.batch)
+        device = pos.device
+
+        time_step = data.time_step
+        pos_t = data.pos[:, 1]
+
+        q_target = data.q_target
+        pos_target = data.pos[:, 2]
+        return graph, pos_t, pos_t, time_step, pos_target, q_target
+
+
     def apply_noise_diffusion_riemannian(self, data):
         """diffusion noise sampling (no bridge). refer to GeoDiff, TSDiff"""
         assert self.noise_schedule.name == "TSDiffNoiseScheduler"
@@ -385,8 +410,7 @@ class BridgeDiffusion(pl.LightningModule):
         graph = self.graph.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
-        batch_size = len(data.geodesic_length)
-
+        batch_size = len(data.ptr) - 1
         node2graph = graph.batch
         edge2graph = node2graph.index_select(0, edge_index[0])
         num_nodes = data.ptr[1:] - data.ptr[:-1]
@@ -455,7 +479,7 @@ class BridgeDiffusion(pl.LightningModule):
         )
         t0 = self.config.diffusion.scheduler.t0
         t1 = self.config.diffusion.scheduler.t1
-        batch_size = len(data.geodesic_length)
+        batch_size = len(data.ptr) - 1
         time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
         return graph, pos_T, pos_T, time_step, pos_target, q_target
 
@@ -520,7 +544,7 @@ class BridgeDiffusion(pl.LightningModule):
         pos_0 = data.pos[:, 0]
 
         ## linear interpolated pos in euclidean
-        batch_size = len(data.geodesic_length)
+        batch_size = len(data.ptr) - 1
         time_step = torch.rand(size=(batch_size,), device=device)
         time_step = time_step.sort()[0]
         time_step_node = time_step.index_select(0, node2graph).unsqueeze(-1)
@@ -567,7 +591,7 @@ class BridgeDiffusion(pl.LightningModule):
         pos_T = data.pos[:, -1]
         pos_0 = data.pos[:, 0]
 
-        batch_size = len(data.geodesic_length)
+        batch_size = len(data.ptr) - 1
         tt = torch.rand(size=(batch_size,), device=device)
         # margin = -0.3
         # print(f"Debug: time margin of {margin} is used.")
@@ -1110,7 +1134,7 @@ class BridgeDiffusion(pl.LightningModule):
             q_gt = self.geodesic_solver.compute_d_or_q(pos_0, graph.atom_type, edge_index, q_type=self.q_type)
             q_t = self.geodesic_solver.compute_d_or_q(pos_t, graph.atom_type, edge_index, q_type=self.q_type)
             # score_ref, _ = self.transform(None, (q_gt - q_t), pos_t, graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type)
-            score_ref, _ = self.transform((pos_0 - pos_t), (q_gt - q_t), pos_t, graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type)
+            score_ref, _ = self.transform((pos_0 - pos_t), (q_gt - q_t), pos_t, graph.atom_type, edge_index, node2graph, num_nodes, q_type=self.q_type, rescale_dq=False)
 
             square_err = (score - score_ref).square().sum(dim=-1)
             rmsd = scatter_mean(square_err, node2graph).sqrt()

@@ -50,6 +50,7 @@ print(args)
 # df = pd.read_csv("./qm9m.csv")
 df = pd.read_csv(args.input_csv)
 print(df)
+# df = df[df["dE"] < 10.0]; print("filtering dE > 10.0")
 y = np.array(df["dE"])
 
 if args.error_type == "q_norm":

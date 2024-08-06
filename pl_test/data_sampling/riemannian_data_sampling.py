@@ -541,7 +541,7 @@ if __name__ == "__main__":
                 atoms_pos_t = Atoms(symbols=atom_type, positions=pos_t[i])
                 atoms_pos_target = Atoms(symbols=atom_type, positions=pos_target[i])
 
-                comment = f'pos_0 idx={data_idx[i]} GeodesicLength=0 time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
+                comment = f'pos_0 idx={data_idx[i]} time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
                 atoms_pos_0.write(filename, comment=comment, append=False)
                 comment = "pos_t"
                 atoms_pos_t.write(filename, comment=comment, append=True)

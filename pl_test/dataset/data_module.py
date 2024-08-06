@@ -29,9 +29,8 @@ class AbstractDataModule(LightningDataset):
             train_dataset=datasets["train"],
             val_dataset=datasets["val"],
             # test_dataset=datasets["test"],
-            # test_dataset=datasets["test"][-50:],
-            test_dataset=datasets["test"][::99],
-            # test_dataset=datasets["train"][-50:],
+            # test_dataset=datasets["test"][::99],
+            test_dataset=datasets["test"][::50],  # NOTE: for small test (~200 samples)
             batch_size=config.train.batch_size,  # if 'debug' not in config.general.name else 2,
             num_workers=config.train.num_workers,
             pin_memory=getattr(config.dataset, 'pin_memory', False),
@@ -187,11 +186,14 @@ class GrambowDataset(InMemoryDataset):
             ]
             pos = torch.stack(pos, dim=0).transpose(0, 1)  # pos shape : (N, T, 3)
 
-            geodesic_length = [
-                torch.tensor(atoms.info["GeodesicLength"], dtype=self.dtype)
-                for atoms in atoms_list
-            ]
-            geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
+            if "GeodesicLength" in atoms.info:
+                geodesic_length = [
+                    torch.tensor(atoms.info["GeodesicLength"], dtype=self.dtype)
+                    for atoms in atoms_list
+                ]
+                geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
+            else:
+                geodesic_length = None
 
             if "time_step" in atoms.info:
                 time_step = torch.tensor(atoms.info["time_step"])
@@ -199,7 +201,7 @@ class GrambowDataset(InMemoryDataset):
                 time_step = None
 
             if "q_target" in atoms.info:
-                q_target = torch.from_numpy(atom.info["q_target"]).to(self.dtype)
+                q_target = torch.from_numpy(atoms.info["q_target"]).to(self.dtype)
             else:
                 q_target = None
 
@@ -356,11 +358,14 @@ class QM9Dataset(InMemoryDataset):
             ]
             pos = torch.stack(pos, dim=0).transpose(0, 1)  # pos shape : (N, T, 3)
 
-            geodesic_length = [
-                torch.tensor(atoms.info["GeodesicLength"], dtype=self.dtype)
-                for atoms in atoms_list
-            ]
-            geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
+            if "GeodesicLength" in atoms.info:
+                geodesic_length = [
+                    torch.tensor(atoms.info["GeodesicLength"], dtype=self.dtype)
+                    for atoms in atoms_list
+                ]
+                geodesic_length = torch.tensor(geodesic_length).unsqueeze(0)  # geodesic_length shape : (1, T)
+            else:
+                geodesic_length = None
 
             if "time_step" in atoms.info:
                 time_step = torch.tensor(atoms.info["time_step"])
@@ -368,7 +373,7 @@ class QM9Dataset(InMemoryDataset):
                 time_step = None
 
             if "q_target" in atoms.info:
-                q_target = torch.from_numpy(atom.info["q_target"]).to(self.dtype)
+                q_target = torch.from_numpy(atoms.info["q_target"]).to(self.dtype)
             else:
                 q_target = None
 
