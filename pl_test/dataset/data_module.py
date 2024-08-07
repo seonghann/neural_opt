@@ -133,7 +133,7 @@ class GrambowDataset(InMemoryDataset):
         return index
 
     def process(self):
-        data_path = os.path.join(self.raw_datadir, "*")
+        data_path = os.path.join(self.raw_datadir, "*.xyz")
         print(f"Info] (GrambowDataset) \n\tdata_path: {data_path}")
 
         # read position and atomic number
@@ -307,7 +307,7 @@ class QM9Dataset(InMemoryDataset):
         return index
 
     def process(self):
-        data_path = os.path.join(self.raw_datadir, "*")
+        data_path = os.path.join(self.raw_datadir, "*.xyz")
         print(f"Info] (QM9Dataset) \n\tdata_path: {data_path}")
 
         # read position and atomic number
