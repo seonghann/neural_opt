@@ -4,7 +4,7 @@ Riemannian data sampling for fine-tuning
 
 import numpy as np
 import torch
-from utils.rxn_graph import MolGraph  # , RxnGraph
+from utils.rxn_graph import MolGraph, RxnGraph
 from torch_geometric.data import Batch
 import pandas as pd
 
@@ -141,6 +141,7 @@ def ode_noise_sampling(
         ban_index = stats["ban_index"].sort().values
         print(f"Debug: ban_index={ban_index}")
 
+    # Deprecated (for debugging, 24.07.29)
     # coeff = torch.ones_like(tt)
     # coeff_node = coeff.index_select(0, node2graph)  # (N, )
     # coeff_edge = coeff.index_select(0, edge2graph)  # (E, )
@@ -165,7 +166,8 @@ def ode_noise_sampling(
 
         data = Batch.from_data_list(data[~ban_batch_mask])
         # graph = self.graph.from_batch(data)
-        graph = MolGraph.from_batch(data)
+        # graph = MolGraph.from_batch(data)
+        graph = Graph.from_batch(data)
 
         pos_noise = pos_noise[~ban_node_mask]
         # x_dot = x_dot[~ban_node_mask]
@@ -241,10 +243,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataloader", type=str, choices=["train", "val", "test"], default="test"
     )
+    parser.add_argument("--graph", type=str, default="mol", choices=["mol", "rxn"])
+    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
 
     args = parser.parse_args()
     print(args)
-    ###########################################################################
+    if args.graph == "mol":
+        Graph = MolGraph
+    elif args.graph == "rxn":
+        Graph = RxnGraph
+    device = torch.device(args.device)
 
     import os
     from torch_scatter import scatter_sum
@@ -300,7 +308,8 @@ if __name__ == "__main__":
     for i_batch, data in enumerate(dataloader):
         print(f"i_batch={i_batch}", flush=True)
 
-        graph = MolGraph.from_batch(data)
+        data = data.to(device)
+        graph = Graph.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
         batch_size = len(data.geodesic_length)
 
@@ -315,22 +324,19 @@ if __name__ == "__main__":
         pos_0 = data.pos[:, 0, :]
         # pos_T = data.pos[:, -1, :]  # MMFF structures
 
-        ## Time sampling
+        # Time sampling
         t0 = config.diffusion.scheduler.t0
         t1 = config.diffusion.scheduler.t1
         time_step = torch.randint(
             max(t0, 1), t1, size=(batch_size,)
-        )  # , device=device)
+        , device=device)
         print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-        a = noise_schedule.get_alpha(time_step)  # , device=device)
-
-        # if i_batch < 13:
-        #     continue
+        a = noise_schedule.get_alpha(time_step, device=device)
 
         if args.sampling_type == "cartesian":
-            ## Perterb pos in Euclidean
+            # Perterb pos in Euclidean
             a_pos = a.index_select(0, node2graph).unsqueeze(-1)
-            pos_noise = torch.randn(size=pos_0.size())  # , device=device)
+            pos_noise = torch.randn(size=pos_0.size(), device=device)
             pos_t = pos_0 + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
 
             q_0 = geodesic_solver.compute_d_or_q(
@@ -371,67 +377,65 @@ if __name__ == "__main__":
             data_idx = data.idx
             results["idx"].extend(data_idx)
             smarts = data.smarts
-            results["smarts"].extend(data_smarts)
+            results["smarts"].extend(smarts)
 
-            ################################ # NOTE: DEBUG
-            geodesic_solver.svd_tol = 1e-1
-            q_proj1 = geodesic_solver.batch_projection(
-                q_straight,
-                pos_t,
-                graph.atom_type,
-                edge_index,
-                graph.batch,
-                num_nodes,
-                q_type=q_type,
-                proj_type="manifold",
-            )
-            geodesic_solver.svd_tol = 1e-2
-            q_proj2 = geodesic_solver.batch_projection(
-                q_straight,
-                pos_t,
-                graph.atom_type,
-                edge_index,
-                graph.batch,
-                num_nodes,
-                q_type=q_type,
-                proj_type="manifold",
-            )
-            geodesic_solver.svd_tol = 1e-3
-            q_proj3 = geodesic_solver.batch_projection(
-                q_straight,
-                pos_t,
-                graph.atom_type,
-                edge_index,
-                graph.batch,
-                num_nodes,
-                q_type=q_type,
-                proj_type="manifold",
-            )
-            geodesic_solver.svd_tol = 1e-6
-            q_proj4 = geodesic_solver.batch_projection(
-                q_straight,
-                pos_t,
-                graph.atom_type,
-                edge_index,
-                graph.batch,
-                num_nodes,
-                q_type=q_type,
-                proj_type="manifold",
-            )
-            norm_ref = norm(q_proj4)
-            perr1 = norm(q_proj1 - q_proj4) / norm_ref * 100
-            perr2 = norm(q_proj2 - q_proj4) / norm_ref * 100
-            perr3 = norm(q_proj3 - q_proj4) / norm_ref * 100
-            print(f"perr1=\n{perr1}")
-            print(f"perr2=\n{perr2}")
-            print(f"perr3=\n{perr3}")
-
-            ################################ # NOTE: DEBUG
+            # Deprecated. (for debugging, 24.07.29)
+            # geodesic_solver.svd_tol = 1e-1
+            # q_proj1 = geodesic_solver.batch_projection(
+            #     q_straight,
+            #     pos_t,
+            #     graph.atom_type,
+            #     edge_index,
+            #     graph.batch,
+            #     num_nodes,
+            #     q_type=q_type,
+            #     proj_type="manifold",
+            # )
+            # geodesic_solver.svd_tol = 1e-2
+            # q_proj2 = geodesic_solver.batch_projection(
+            #     q_straight,
+            #     pos_t,
+            #     graph.atom_type,
+            #     edge_index,
+            #     graph.batch,
+            #     num_nodes,
+            #     q_type=q_type,
+            #     proj_type="manifold",
+            # )
+            # geodesic_solver.svd_tol = 1e-3
+            # q_proj3 = geodesic_solver.batch_projection(
+            #     q_straight,
+            #     pos_t,
+            #     graph.atom_type,
+            #     edge_index,
+            #     graph.batch,
+            #     num_nodes,
+            #     q_type=q_type,
+            #     proj_type="manifold",
+            # )
+            # geodesic_solver.svd_tol = 1e-6
+            # q_proj4 = geodesic_solver.batch_projection(
+            #     q_straight,
+            #     pos_t,
+            #     graph.atom_type,
+            #     edge_index,
+            #     graph.batch,
+            #     num_nodes,
+            #     q_type=q_type,
+            #     proj_type="manifold",
+            # )
+            # norm_ref = norm(q_proj4)
+            # perr1 = norm(q_proj1 - q_proj4) / norm_ref * 100
+            # perr2 = norm(q_proj2 - q_proj4) / norm_ref * 100
+            # perr3 = norm(q_proj3 - q_proj4) / norm_ref * 100
+            # print(f"perr1=\n{perr1}")
+            # print(f"perr2=\n{perr2}")
+            # print(f"perr3=\n{perr3}")
 
         elif args.sampling_type == "riemannian":
             ## Perterb pos in Riemannian
             a_edge = a.index_select(0, edge2graph)
-            q_noise = torch.randn(size=(edge_index.size(1),))  # , device=device)
+            q_noise = torch.randn(size=(edge_index.size(1),), device=device)
             q_noise *= (1.0 - a_edge).sqrt() / a_edge.sqrt()
             pos_t, pos_target, q_target, graph, time_step, ban_index = (
                 ode_noise_sampling(
@@ -517,7 +521,6 @@ if __name__ == "__main__":
         # print(df)
         # print("mean     : ", df["perr_straight"].mean(), df["perr_projected"].mean())
         # print("median   : ", df["perr_straight"].median(), df["perr_projected"].median())
-        # # exit("DEBUG")# FIX: DEBUGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
         # ######################################
 
         if args.save_xyz:
@@ -541,7 +544,7 @@ if __name__ == "__main__":
                 atoms_pos_t = Atoms(symbols=atom_type, positions=pos_t[i])
                 atoms_pos_target = Atoms(symbols=atom_type, positions=pos_target[i])
 
-                comment = f'pos_0 idx={data_idx[i]} time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
+                comment = f'pos_0 idx={data_idx[i]} GeodesicLength=0 time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
                 atoms_pos_0.write(filename, comment=comment, append=False)
                 comment = "pos_t"
                 atoms_pos_t.write(filename, comment=comment, append=True)
