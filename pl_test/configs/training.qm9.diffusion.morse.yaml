@@ -1,0 +1,137 @@
+# config file for load dataset
+# train contains batch_size, num_workers
+
+train:
+  batch_size: 300
+  num_workers: 1
+  lambda_x_train: 0
+  lambda_q_train: 1
+  lambda_x_valid: 0
+  lambda_q_valid: 1
+  clip_grad: 100.0
+  progress_bar: False
+
+  noise_type: diffusion
+  loss_weight: diffusion
+  do_scale: false
+
+  # transform: eq_transform
+  # transform: projection_dx2dq
+  transform: projection_dq2dx
+  # transform:
+  transform_at_forward: true
+
+  optimizer:
+    type: adam
+    lr: 5.e-4
+    weight_decay: 0.
+    beta1: 0.95
+    beta2: 0.999
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 10
+    min_lr: 0.000125
+
+  seed: 42
+  epochs: 3000
+
+  check_val_every_n_epoch: 3
+  sample_every_n_batch: 30000
+  sample_every_n_valid: 30000
+
+dataset:
+  type: molecule
+
+  name: MMFFtoDFT
+  datadir: data_qm9m_MMFFtoDFT
+  raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
+  data_split: /home/share/DATA/QM9M/data_split.pkl
+  dtype: float32  # deprecated
+
+debug:
+  save_dir: './debug'
+  save_dynamic:
+
+general:
+  name: 20240725.qm9.morse.projection_dq2dx.rescale_dq.t0to1500
+  # use_wandb: False
+  use_wandb: True
+  wandb: 'online'
+  save_model: True
+  gpus: 4
+  # gpus: 1
+  strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
+  resume: # ckpt path
+  test_only:
+  evaluate_all_checkpoints:
+
+sampling:
+  score_type: diffusion
+  pred_type: diffusion
+  stochastic: True
+  sde_dt: 0.01
+  gode_iter: 50
+  gode_ref_dt: 0.05
+  gode_max_dt: 0.1
+  time_margin: 0.0
+
+model:
+  name: geodiff
+
+  pred_type: edge  # edge or node
+  hidden_dim: 128
+  num_bond_type: 10
+  # num_atom_type: 4
+  num_atom_type: 5
+  num_atom_feat: 8
+
+  append_atom_feat: true
+  # append_atom_feat: false
+
+  edge_encoder: mlp
+  mlp_act: swish
+  score_act: swish
+
+  graph_encoder:
+    name: schnet
+    edge_emb: False
+    num_convs: 7
+    cutoff: 10.0
+    smooth_conv: False
+    mlp_act: swish
+    # hidden_dim: 256
+    hidden_dim: 128
+
+diffusion:
+  scheduler:
+    t0: 0
+    # t1: 5000
+    t1: 1500
+    name: tsdiff
+    beta_start: 1.e-7
+    beta_end: 2.e-3
+    num_diffusion_timesteps: 5000
+    scheduler_type: sigmoid
+
+manifold:
+  ode_solver:
+    vpae_thresh: 1e+9  # percent error threshold
+    svd_tol: 1e-2
+    alpha: 1.7
+    beta: 0.01
+    gamma: 0.0
+    iter: 1
+    max_iter: 1
+    ref_dt: 1e+9
+    _ref_dt: 1e+9
+    max_dt: 1e+9
+    _max_dt: 1e+9
+    min_dt: 1e-3
+    _min_dt: 1e-4
+    # pos_adjust_scaler: 0.03
+    # pos_adjust_thresh: 3e-3
+    pos_adjust_scaler: 0.0
+    pos_adjust_thresh: 0.0
+    q_type: morse
+    # q_type: DM
