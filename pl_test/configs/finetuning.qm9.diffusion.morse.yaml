@@ -35,8 +35,7 @@ train:
     min_lr: 0.000125
 
   seed: 42
-  # epochs: 3000
-  epochs: 10000
+  epochs: 6000
 
   check_val_every_n_epoch: 3
   sample_every_n_batch: 30000
@@ -46,12 +45,8 @@ dataset:
   type: molecule
 
   name: MMFFtoDFT
-  # datadir: data_qm9m_MMFFtoDFT
-  # raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
-  # data_split: /home/share/DATA/QM9M/data_split.pkl
-  #
-  datadir: data_qm9m_alpha1.7_beta0.01
-  raw_datadir: /home/jhwoo/jhwoo_backup/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150
+  datadir: data_qm9m_alpha1.7_beta0.01_3times
+  raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42_1_2
   data_split: /home/share/DATA/QM9M/data_split.pkl
   dtype: float32  # deprecated
 
@@ -60,14 +55,16 @@ debug:
   save_dynamic:
 
 general:
-  name: 20240806.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.full_data
+  # name: 20240814.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times
+  name: 20240826.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times.keepgoing
   # use_wandb: False
   use_wandb: True
   wandb: 'online'
   save_model: True
   gpus: 4
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: ./checkpoints/20240725.qm9.morse.projection_dq2dx.rescale_dq.t0to1500/epoch=2999-valid/loss=0.705.ckpt
+  # resume: ./checkpoints/20240725.qm9.morse.projection_dq2dx.rescale_dq.t0to1500/epoch=2999-valid/loss=0.705.ckpt
+  resume: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240814.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times/epoch=5909-valid/loss=0.001.ckpt
   test_only:
   evaluate_all_checkpoints:
 

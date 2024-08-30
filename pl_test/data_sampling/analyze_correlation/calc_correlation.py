@@ -34,7 +34,8 @@ parser.add_argument(
     "--error_type",
     type=str,
     help="structural error type",
-    choices=["DMAE", "RMSD", "q_norm"],
+    # choices=["DMAE", "RMSD", "q_norm"],
+    choices=["DMAE", "RMSD", "q_norm", "geodesic_length"],
     required=True,
 )
 parser.add_argument(
@@ -49,19 +50,26 @@ print(args)
 
 # df = pd.read_csv("./qm9m.csv")
 df = pd.read_csv(args.input_csv)
+df = df.iloc[:2000]  # slicing first 1000 rows
+# df = df.iloc[-1000:]  # slicing first 1000 rows
 print(df)
 # df = df[df["dE"] < 10.0]; print("filtering dE > 10.0")
 y = np.array(df["dE"])
 
-if args.error_type == "q_norm":
+# if args.error_type == "q_norm":
+if args.error_type in ["q_norm", "geodesic_length"]:
     x = np.array(
         df[args.error_type.lower() + f"({args.alpha},{args.beta},{args.gamma})"]
     )
     xlabel = f"{args.error_type}"
+    if args.error_type == "geodesic_length":
+        xlabel = "geodesic distance"
     ylabel = "$|\Delta E|$ (kcal/mol)"
 else:
     x = np.array(df[args.error_type.lower()])
     xlabel = f"{args.error_type} ($\AA$)"
+    if args.error_type == "DMAE":
+        xlabel = f"D-MAE ($\AA$)"
     ylabel = "$|\Delta E|$ (kcal/mol)"
 
 
@@ -78,33 +86,66 @@ print(f"Pearson's r: {corr}")
 if not args.visualize:
     exit("Debug: Check only corr")
 
-fig = plt.figure(figsize=(8, 8))
-# fig.suptitle('GFN2-xTB vs wB97xd3', fontsize=16)
-fig.suptitle("MMFF vs DFT", fontsize=16)
-gs = gridspec.GridSpec(3, 3)
-ax_main = plt.subplot(gs[1:3, :2])
-ax_xDist = plt.subplot(gs[0, :2], sharex=ax_main)
-ax_yDist = plt.subplot(gs[1:3, 2], sharey=ax_main)
 
-ax_main.scatter(x, y, marker=".")
-ax_main.set(xlabel=xlabel, ylabel=ylabel)
+if False:
+    fig = plt.figure(figsize=(8, 8))
+    fig.suptitle("MMFF vs DFT", fontsize=16)
+    gs = gridspec.GridSpec(3, 3)
+    ax_main = plt.subplot(gs[1:3, :2])
+    ax_xDist = plt.subplot(gs[0, :2], sharex=ax_main)
+    ax_yDist = plt.subplot(gs[1:3, 2], sharey=ax_main)
 
-ax_xDist.hist(x, bins=100, align="mid")
-ax_xDist.set(ylabel="count")
+    ax_main.scatter(x, y, marker=".")
+    ax_main.set(xlabel=xlabel, ylabel=ylabel)
 
-ax_yDist.hist(y, bins=100, orientation="horizontal", align="mid")
-ax_yDist.set(xlabel="count")
-plt.ylim(
-    0,
-)
-# plt.xlim(0,)
-ax_main.set_xlim(
-    0,
-)
-# plt.show()
+    ax_xDist.hist(x, bins=100, align="mid")
+    ax_xDist.set(ylabel="count")
+
+    ax_yDist.hist(y, bins=100, orientation="horizontal", align="mid")
+    ax_yDist.set(xlabel="count")
+    # plt.xlim(0,)
+    plt.ylim(0,)
+    ax_main.set_xlim(0,)
+    # plt.show()
+else:
+    fontsize = 15
+    fig = plt.figure(figsize=(6, 6))
+    plt.grid(True, color='gray', linestyle='-', linewidth=0.5, alpha=0.3)
+    plt.scatter(x, y, marker=".")
+    plt.xlabel(xlabel, fontsize=fontsize)
+    plt.ylabel(ylabel, fontsize=fontsize)
+
+    # set x & y range
+    if args.error_type == "RMSD":
+        plt.xlim(0, 0.5)
+        plt.ylim(0, 20.0)
+        # plt.xlim(0, 0.3)
+        # plt.ylim(0, 10.0)
+    elif args.error_type == "DMAE":
+        plt.xlim(0, 0.2)
+        plt.ylim(0, 20.0)
+        # plt.xlim(0, 0.15)
+        # plt.ylim(0, 10.0)
+    elif args.error_type in ["q_norm", "geodesic_length"]:
+        plt.xlim(0, 0.3)
+        plt.ylim(0, 20.0)
+        # plt.xlim(0, 0.2)
+        # plt.ylim(0, 10.0)
+    else:
+        raise ValueError()
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.tight_layout()
+    # save_filename = f"./{args.error_type}.png"
+    save_filename = f"./{args.error_type}.pdf"
+    # save_filename = f"./{args.error_type}.svg"
+    plt.savefig(save_filename)
+    print(f"save {save_filename}")
+    plt.show()
+    exit("DEBUG")
 
 
-if args.error_type == "q_norm":
+# if args.error_type == "q_norm":
+if args.error_type in ["q_norm", "geodesic_length"]:
     re = 1.5
 
     fig = plt.figure(figsize=(8, 8))

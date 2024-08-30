@@ -687,6 +687,33 @@ class BridgeDiffusion(pl.LightningModule):
         graph,
         time_step,
     ):
+        """
+        Performs ODE sampling.
+
+        Parameters:
+        -----------
+        pos : torch.Tensor
+            The initial positions of nodes in the graph.
+        q_noise : torch.Tensor
+            The noise tensor that will be added to q(pos).
+        edge_index : torch.LongTensor
+            The edge indices for the graph. This tensor typically has shape [2, num_edges], where each column represents
+            a connection between two nodes.
+        atom_type : torch.LongTensor
+            A tensor representing the types of atoms or nodes in the graph. shape=[N,]
+        node2graph : torch.LongTensor
+            A tensor that maps each node to its corresponding graph index. shape=[N,]
+        edge2graph : torch.LongTensor
+            A tensor that maps each edge to its corresponding graph index. shape=[E,]
+        num_nodes : torch.LongTensor
+            The number of nodes in the batch of graphs. shape=[B,]
+        data : Data object
+            The input data containing the graph(s) information. This typically includes the node features, edge features, etc.
+        graph : Graph object
+            The graph structure containing all relevant information like adjacency lists, node attributes, etc.
+        time_step : torch.LongTensor
+            The time steps of noise scheduling. shape=[B,]
+        """
         init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
             pos,
             q_noise,
@@ -1006,6 +1033,7 @@ class BridgeDiffusion(pl.LightningModule):
                     else:
                         batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
+                        # print(f"Debug: Run sample_batch with ODE!!!!!!!!!!!!!!!!!!!!!!!!")
                     samples.extend(batch_out)
 
             self.test_sampling_metrics(samples, self.name, self.current_epoch, valid_counter=-1, test=True, local_rank=self.local_rank)
@@ -1115,11 +1143,16 @@ class BridgeDiffusion(pl.LightningModule):
         batch=None,  # for debugging
         **kwargs,
     ):
+        """
+        CFM sampling: x_{t-dt} = x_t + (x_0 - x_t)_\theta / t * dt
+        """
         assert self.config.train.do_scale == False
 
         time_step = graph.t.unsqueeze(-1)
         dt = dt.unsqueeze(-1)
-        score = self.forward(graph)[0]
+        # score = self.forward(graph)[0]
+        score_x, score_q = self.forward(graph)[:2]#[0]
+        score = score_x
 
         if debug:
             pos_0 = batch.pos[:, 0, :]
@@ -1146,9 +1179,17 @@ class BridgeDiffusion(pl.LightningModule):
             print(f"Debug: denom=\n{denom.detach()}")
             print(f"Debug: perr=\n{perr.detach()}")
 
-        score /= time_step
+        node2graph = batch.batch
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+        edge2graph = node2graph.index_select(0, edge_index[0])
 
-        return -score * dt
+        # score /= time_step
+        score_x *= dt.index_select(0, node2graph) / time_step.index_select(0, node2graph)
+        score_q *= (dt.index_select(0, edge2graph) / time_step.index_select(0, edge2graph)).squeeze(-1)
+
+        # return -score * dt
+        # return -score * dt, -score_q * dt
+        return -score_x, -score_q
 
     @torch.no_grad()
     def sample_batch_diffusion(
@@ -1377,12 +1418,12 @@ class BridgeDiffusion(pl.LightningModule):
         pos = center_pos(pos, batch.batch)
         pos_init = pos.clone()
 
-        # t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin # (G, )
         t = torch.ones(batch.num_graphs, device=pos.device)
         t -= self.config.sampling.time_margin # (G, )
 
-        t = t.index_select(0, node2graph)
-        dt = torch.ones_like(t) * self.config.sampling.sde_dt
+        # t = t.index_select(0, node2graph)
+        # dt = torch.ones_like(t) * self.config.sampling.sde_dt
+        dt = torch.ones_like(t) / self.config.sampling.sde_steps
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
         dynamic_graph.pos_traj.append(pos.to("cpu"))
 
@@ -1405,9 +1446,14 @@ class BridgeDiffusion(pl.LightningModule):
                 dynamic_graph,
                 dt,
                 stochastic=stochastic,
-                debug=True,
+                # debug=True,
+                debug=False,
                 batch=batch,
-            )
+            )[0]
+
+            # NOTE: DEBUG
+            # dx = clip_norm(dx, limit=clip)
+
             pos -= dx
             t -= dt
 
@@ -1437,41 +1483,51 @@ class BridgeDiffusion(pl.LightningModule):
     @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
         graph = self.graph.from_batch(batch)
+        node2graph = batch.batch
+
         pos = batch.pos[:, -1, :]
         pos_init = batch.pos[:, -1, :]
+
         t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin # (G, )
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
+        dynamic_graph.pos_traj.append(pos.to("cpu"))
 
         # full_edge, _, _ = dynamic_graph.full_edge(upper_triangle=True)
         full_edge = dynamic_graph.full_edge(upper_triangle=True)[0]
-        node2graph = batch.batch
         edge2graph = node2graph.index_select(0, full_edge[0])
         num_nodes = batch.batch.bincount()
         t = torch.ones_like(full_edge[0]) - self.config.sampling.time_margin
-        dt = t * self.config.sampling.sde_dt
+        # dt = t * self.config.sampling.sde_dt
+        dt = torch.ones_like(t) / self.config.sampling.sde_steps
 
         while (t > 1e-6).any():
             print(f"t={t[0]}")
             dt = dt.clip(max=t)
 
-            dq = self.predict_dq(
-                batch,
+            # dq = self.predict_dq(
+            #     batch,
+            #     dynamic_graph,
+            #     pos,
+            #     pos_init,
+            #     graph,
+            #     full_edge,
+            #     node2graph,
+            #     edge2graph,
+            #     num_nodes,
+            #     t,
+            #     dt,
+            #     stochastic,
+            #     pred_type=self.config.sampling.score_type,
+            #     perr=0.0,
+            # )
+            dq = self.predict_cfm(
                 dynamic_graph,
-                pos,
-                pos_init,
-                graph,
-                full_edge,
-                node2graph,
-                edge2graph,
-                num_nodes,
-                t,
                 dt,
-                stochastic,
-                pred_type=self.config.sampling.score_type,
-                perr=0.0,
-            )
+                debug=True,
+                batch=batch,
+            )[1]
 
-            pos = dynamic_graph.pos
+            # pos = dynamic_graph.pos
 
             init, last, iter, index_tensor, stats = self.geodesic_solver.batch_geodesic_ode_solve(
                 pos,
@@ -1551,6 +1607,7 @@ class BridgeDiffusion(pl.LightningModule):
             # dynamic_graph.update_graph(pos.clone(), batch.batch, score=score.clone(), t=t)
             t = t - dt
             pos = pos_tm1
+
             # dynamic_graph.update_graph(pos, batch.batch, score=score, t=t)
             dynamic_graph.update_graph(pos, batch.batch, score=dq, t=t)
 

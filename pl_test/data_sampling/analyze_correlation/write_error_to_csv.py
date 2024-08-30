@@ -277,7 +277,7 @@ if __name__ == "__main__":
 
         atoms_mmff = read_gaussian_com(f"{args.dft_results_path1}/idx{idx}/input.com")
         atoms_dft = read_gaussian_com(f"{args.dft_results_path2}/idx{idx}/input.com")
-        atom_type = atoms_dft.get_atomic_numbers()
+        # atom_type = atoms_dft.get_atomic_numbers()
 
         if args.error_type == "RMSD":
             err = calc_RMSD(atoms_mmff, atoms_dft)

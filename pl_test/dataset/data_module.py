@@ -28,9 +28,7 @@ class AbstractDataModule(LightningDataset):
         super().__init__(
             train_dataset=datasets["train"],
             val_dataset=datasets["val"],
-            # test_dataset=datasets["test"],
-            # test_dataset=datasets["test"][::99],
-            test_dataset=datasets["test"][::50],  # NOTE: for small test (~200 samples)
+            test_dataset=datasets["test"],
             batch_size=config.train.batch_size,  # if 'debug' not in config.general.name else 2,
             num_workers=config.train.num_workers,
             pin_memory=getattr(config.dataset, 'pin_memory', False),

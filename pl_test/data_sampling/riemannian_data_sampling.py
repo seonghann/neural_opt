@@ -311,7 +311,7 @@ if __name__ == "__main__":
         data = data.to(device)
         graph = Graph.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
-        batch_size = len(data.geodesic_length)
+        batch_size = len(data.ptr) - 1
 
         node2graph = graph.batch
         edge2graph = node2graph.index_select(0, edge_index[0])
@@ -461,12 +461,16 @@ if __name__ == "__main__":
             edge_index = graph.full_edge(upper_triangle=True)[0]
             node2graph = graph.batch
             edge2graph = node2graph.index_select(0, edge_index[0])
-            _atom_type = np.array(data.x.split(natoms), dtype=object)[~ban_batch_mask]
+            tmp = np.array(data.x.split(natoms), dtype=object)
+            if len(data) == 1:
+                _atom_type = data.x.split(natoms)
+            else:
+                _atom_type = np.array(data.x.split(natoms), dtype=object)[~ban_batch_mask]
             data_idx = torch.tensor(data.idx)[~ban_batch_mask].tolist()
             natoms = node2graph.bincount().tolist()
             nedges = edge2graph.bincount().tolist()
             pos_0 = pos_0[~ban_node_mask]
-            smarts = np.array(data.smarts)[~ban_batch_mask]
+            smarts = np.array(data.smarts)[~ban_batch_mask.numpy()]
 
             q_target = geodesic_solver.batch_projection(
                 q_target,
@@ -544,7 +548,7 @@ if __name__ == "__main__":
                 atoms_pos_t = Atoms(symbols=atom_type, positions=pos_t[i])
                 atoms_pos_target = Atoms(symbols=atom_type, positions=pos_target[i])
 
-                comment = f'pos_0 idx={data_idx[i]} GeodesicLength=0 time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
+                comment = f'pos_0 idx={data_idx[i]} time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
                 atoms_pos_0.write(filename, comment=comment, append=False)
                 comment = "pos_t"
                 atoms_pos_t.write(filename, comment=comment, append=True)

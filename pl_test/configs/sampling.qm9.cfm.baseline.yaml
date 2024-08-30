@@ -52,7 +52,7 @@ dataset:
 
 debug:
   save_dir: './debug'
-  save_dynamic: './save_dynamic.baseline.pt'
+  save_dynamic: './save_dynamic.baseline.128steps.pt'
 
 general:
   name: qm9.cfm.sampling
@@ -72,9 +72,8 @@ general:
 sampling:
   score_type: cfm
   stochastic: False
-  # sde_dt: 0.1
-  sde_dt: 0.01
-  # sde_dt: 0.001
+  sde_steps: 128
+  sde_dt: 0.01  # deprecated
   gode_iter: 50
   gode_ref_dt: 0.05
   gode_max_dt: 0.1

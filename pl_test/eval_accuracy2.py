@@ -152,8 +152,17 @@ if __name__ == "__main__":
     parser.add_argument("--prb_pt", type=str)
     parser.add_argument("--align_target", type=str, default="none", choices=["DMAE", "RMSD", "none"])
     parser.add_argument("--save_dir", type=str, required=False, default="", help="save xyz files")
+    parser.add_argument("--ban_index", type=str, required=False, default=None, help="file path containing ban indices (.pkl)")
+    parser.add_argument("--save_csv", type=str, required=False, default=None, help="save accuracies (.csv)")
     args = parser.parse_args()
     print(args)
+
+    import pickle
+
+    if args.ban_index is None:
+        ban_index = []
+    else:
+        ban_index = pickle.load(open(args.ban_index, "rb"))
     ###########################################################################
 
     ###########################################################################
@@ -163,8 +172,6 @@ if __name__ == "__main__":
 
     config = OmegaConf.load(args.config_yaml)
     datamodule = load_datamodule(config)
-    for batch in datamodule.test_dataloader():
-        print(f"Debug: batch.idx={batch.idx}")
 
     pos_ref_list = []
     data_idx_list = []
@@ -216,9 +223,15 @@ if __name__ == "__main__":
     dmae_list_xT = []
     q_norm_list = []
     q_norm_list_xT = []
+    data_idx_list2 = []
  
-    # for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)): 
     for i, (pos_ref, pos_gen, xT) in enumerate(zip(pos_ref_list, pos_list, xT_list)): 
+        data_idx = data_idx_list[i]
+        if data_idx in ban_index:
+            print(f"Pass data_idx={data_idx} because it's in ban_index.")
+            continue
+        data_idx_list2.append(data_idx)
+
         _atom_type = atom_type_list[i]
 
         smarts = smarts_list[i]
@@ -250,8 +263,7 @@ if __name__ == "__main__":
         q_norm_list.append(q_norm)
         q_norm_list_xT.append(q_norm_xT)
 
-        # print(f"it={i}: rmsd={rmsd}, dmae={dmae}")
-        print(f"it: {i}, data_idx: {data_idx_list[i]}, rmsd: {rmsd_xT} > {rmsd}, dmae: {dmae_xT} > {dmae}, q_norm: {q_norm_xT} > {q_norm}")
+        print(f"it: {i}, data_idx: {data_idx}, rmsd: {rmsd_xT} > {rmsd}, dmae: {dmae_xT} > {dmae}, q_norm: {q_norm_xT} > {q_norm}")
 
     rmsd_list = torch.tensor(rmsd_list)
     dmae_list = torch.tensor(dmae_list)
@@ -260,29 +272,44 @@ if __name__ == "__main__":
     q_norm_list = torch.tensor(q_norm_list)
     q_norm_list_xT = torch.tensor(q_norm_list_xT)
 
-    print(f"x0 vs predicted")
-    print(f"dmae_list.sort()[0]=\n{dmae_list.sort()[0]}")
-    print(f"rmsd_list.sort()[0]=\n{rmsd_list.sort()[0]}")
-    print(f"q_norm_list.sort()[0]=\n{q_norm_list.sort()[0]}")
-    print(f"dmae_list=\n{dmae_list}")
-    print(f"rmsd_list=\n{rmsd_list}")
-    print(f"q_norm_list=\n{q_norm_list}")
-    print(f"RMSD   (mean, median): {rmsd_list.mean()}, {rmsd_list.median()}")
-    print(f"DMAE   (mean, median): {dmae_list.mean()}, {dmae_list.median()}")
-    print(f"q_norm (mean, median): {q_norm_list.mean()}, {q_norm_list.median()}")
+    import pandas as pd
+    pd.set_option('display.float_format', '{:.3f}'.format)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.max_rows', None)
+    pd.set_option('display.width', None)
+    pd.set_option('display.max_seq_items', None)
+    pd.set_option('display.max_colwidth', 500)
+    pd.set_option('expand_frame_repr', True)
 
+    save_data = {
+        "data_idx": data_idx_list2,
+        "rmsd_xT": rmsd_list_xT,
+        "rmsd": rmsd_list,
+        "dmae_xT": dmae_list_xT,
+        "dmae": dmae_list,
+        "q_norm_xT": q_norm_list_xT,
+        "q_norm": q_norm_list,
+    }
+    df = pd.DataFrame(save_data)
+    df = df.sort_values(by="rmsd"); print("Sorted with rmsd")
+    print(df)
+
+    if args.save_csv is not None:
+        df.to_csv(args.save_csv)
+        print(f"Save {args.save_csv}")
+
+    print(f"x0 vs predicted")
+    print(f"RMSD   (mean, median): {rmsd_list.mean():.3g}, {rmsd_list.median():.3g}")
+    print(f"DMAE   (mean, median): {dmae_list.mean():.3g}, {dmae_list.median():.3g}")
+    print(f"q_norm (mean, median): {q_norm_list.mean():.3g}, {q_norm_list.median():.3g}")
 
     print("=" * 100)
     print(f"x0 vs xT")
-    print(f"dmae_list_xT.sort()[0]=\n{dmae_list_xT.sort()[0]}")
-    print(f"rmsd_list_xT.sort()[0]=\n{rmsd_list_xT.sort()[0]}")
-    print(f"q_norm_list_xT.sort()[0]=\n{q_norm_list_xT.sort()[0]}")
-    print(f"dmae_list_xT=\n{dmae_list_xT}")
-    print(f"rmsd_list_xT=\n{rmsd_list_xT}")
-    print(f"q_norm_list_xT=\n{q_norm_list_xT}")
-    print(f"RMSD   (mean, median): {rmsd_list_xT.mean()}, {rmsd_list_xT.median()}")
-    print(f"DMAE   (mean, median): {dmae_list_xT.mean()}, {dmae_list_xT.median()}")
-    print(f"q_norm (mean, median): {q_norm_list_xT.mean()}, {q_norm_list_xT.median()}")
+    print(f"RMSD   (mean, median): {rmsd_list_xT.mean():.3g}, {rmsd_list_xT.median():.3g}")
+    print(f"DMAE   (mean, median): {dmae_list_xT.mean():.3g}, {dmae_list_xT.median():.3g}")
+    print(f"q_norm (mean, median): {q_norm_list_xT.mean():.3g}, {q_norm_list_xT.median():.3g}")
+
+    print("# of data: ", len(rmsd_list))
     ###########################################################################
 
     if args.save_dir:
