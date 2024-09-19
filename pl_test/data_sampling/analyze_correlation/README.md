@@ -25,3 +25,10 @@ Analyse the correlation b/w structural error and energy error.
 
       # Calculate correlation and visualization scatter plot
       $ python calc_correlation.py --error_type q_norm --alpha 1.7 --beta 0.01 --input_csv ./qm9m.csv --visualize
+
+
+      # Visualize correlation scatter graph
+      $ python write_geodesic_length_to_csv.py --error_type geodesic_length --input_csv ./qm9m.csv --output_csv ./qm9m.csv --dft_results_path1 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/MMFF --dft_results_path2 /home/share/DATA/QM9M/Geodesic_processing/optimize_geodesic_coeffs/QM9M_SP_CALC/results/DFT --alpha 1.7 --beta 0.01
+      python calc_correlation.py --error_type geodesic_length --alpha 1.7 --beta 0.01 --input_csv ./qm9m.csv --visualize
+      python calc_correlation.py --error_type RMSD --input_csv ./qm9m.csv --visualize
+      python calc_correlation.py --error_type DMAE --input_csv ./qm9m.csv --visualize

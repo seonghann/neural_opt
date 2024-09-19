@@ -309,6 +309,11 @@ if __name__ == "__main__":
     print(f"DMAE   (mean, median): {dmae_list_xT.mean():.3g}, {dmae_list_xT.median():.3g}")
     print(f"q_norm (mean, median): {q_norm_list_xT.mean():.3g}, {q_norm_list_xT.median():.3g}")
 
+    print(f"x0 vs xT")
+    print(f"RMSD   (Q1, Q3): {np.percentile(rmsd_list_xT, 25):.3g}, {np.percentile(rmsd_list_xT, 75):.3g}")
+    print(f"DMAE   (Q1, Q3): {np.percentile(dmae_list_xT, 25):.3g}, {np.percentile(dmae_list_xT, 75):.3g}")
+    print(f"q_norm (Q1, Q3): {np.percentile(q_norm_list_xT, 25):.3g}, {np.percentile(q_norm_list_xT, 75):.3g}")
+
     print("# of data: ", len(rmsd_list))
     ###########################################################################
 
