@@ -947,9 +947,9 @@ class BridgeDiffusion(pl.LightningModule):
         self.print(msg)
         if (self.val_counter) % self.config.train.sample_every_n_valid == 0:
             stochastic = self.config.sampling.stochastic
-            start = time.time()
             samples = []
 
+            start = time.time()
             for i, batch in enumerate(self.trainer.datamodule.val_dataloader()):
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
@@ -963,6 +963,7 @@ class BridgeDiffusion(pl.LightningModule):
                         batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
                     samples.extend(batch_out)
+            self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
 
             self.valid_sampling_metrics(
                 samples, self.name,
@@ -971,7 +972,6 @@ class BridgeDiffusion(pl.LightningModule):
                 test=True,
                 local_rank=self.local_rank
             )
-            self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
         print("Validation epoch end ends...")
 
     def on_test_epoch_start(self) -> None:
@@ -1008,6 +1008,10 @@ class BridgeDiffusion(pl.LightningModule):
         )
         return {'loss': loss}
 
+    def test_step(self, data, i):
+        print("Passing test_step")
+        pass
+
     def on_test_epoch_end(self) -> None:
         to_log = self.test_metrics.log_epoch_metrics()
         loss = to_log["test_epoch/loss"]
@@ -1018,10 +1022,16 @@ class BridgeDiffusion(pl.LightningModule):
         self.print(msg)
         self.test_counter += 1
         if self.test_counter % self.config.train.sample_every_n_valid == 0:
-            start = time.time()
             stochastic = self.config.sampling.stochastic
             samples = []
-            for i, batch in enumerate(self.trainer.datamodule.test_dataloader()):
+
+            start = time.time()
+            for i, batch in enumerate(tqdm(self.trainer.datamodule.test_dataloader(), total=len(self.trainer.datamodule.test_dataloader()))):
+                if i < self.config.sampling.batch_idx_start:
+                    continue
+                if i > self.config.sampling.batch_idx_end:
+                    break
+
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
                     if self.config.sampling.score_type == "diffusion":
@@ -1035,9 +1045,8 @@ class BridgeDiffusion(pl.LightningModule):
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
                         # print(f"Debug: Run sample_batch with ODE!!!!!!!!!!!!!!!!!!!!!!!!")
                     samples.extend(batch_out)
-
-            self.test_sampling_metrics(samples, self.name, self.current_epoch, valid_counter=-1, test=True, local_rank=self.local_rank)
             self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
+            self.test_sampling_metrics(samples, self.name, self.current_epoch, valid_counter=-1, test=True, local_rank=self.local_rank)
         print("Test epoch end ends...")
 
         ## Save dynamic_graph object
@@ -1452,6 +1461,10 @@ class BridgeDiffusion(pl.LightningModule):
             )[0]
 
             # NOTE: DEBUG
+            # clip = 0.1 # 1 # 100
+            # dx_norm = dx.norm(dim=-1)
+            # mask = dx_norm > clip
+            # dx[mask] = dx[mask] * (clip / dx_norm[mask]).unsqueeze(1)
             # dx = clip_norm(dx, limit=clip)
 
             pos -= dx
@@ -1523,7 +1536,8 @@ class BridgeDiffusion(pl.LightningModule):
             dq = self.predict_cfm(
                 dynamic_graph,
                 dt,
-                debug=True,
+                # debug=True,
+                debug=False,
                 batch=batch,
             )[1]
 

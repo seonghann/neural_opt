@@ -32,3 +32,7 @@ Analyse the correlation b/w structural error and energy error.
       python calc_correlation.py --error_type geodesic_length --alpha 1.7 --beta 0.01 --input_csv ./qm9m.csv --visualize
       python calc_correlation.py --error_type RMSD --input_csv ./qm9m.csv --visualize
       python calc_correlation.py --error_type DMAE --input_csv ./qm9m.csv --visualize
+
+      python calc_correlation.py --error_type geodesic_length --alpha 1.7 --beta 0.01 --input_csv ./qm9m.csv --visualize --loglog
+      python calc_correlation.py --error_type RMSD --input_csv ./qm9m.csv --visualize --loglog
+      python calc_correlation.py --error_type DMAE --input_csv ./qm9m.csv --visualize --loglog

@@ -53,7 +53,8 @@ dataset:
 
 debug:
   save_dir: './debug'
-  save_dynamic: './save_dynamic.morse.128steps.pt'
+  # save_dynamic: './save_dynamic.morse.128steps.pt'
+  save_dynamic: './save_dynamic.morse_pretrain.128steps.pt'
 
 general:
   name: qm9.cfm.sampling
@@ -63,11 +64,12 @@ general:
   save_model: True
   # gpus: 8
   gpus: 1
-  # gpus: 0
+  # gpus: 0  # for checking CPU time
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume: # ckpt path
   # test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240814.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times/epoch=5909-valid/loss=0.001.ckpt
-  test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240826.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times.keepgoing/epoch=5969-valid/norm_perr=0.158.ckpt  # BEST norm_perr
+  # test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240826.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times.keepgoing/epoch=5969-valid/norm_perr=0.158.ckpt  # BEST norm_perr
+  test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240725.qm9.morse.projection_dq2dx.rescale_dq.t0to1500/epoch=2999-valid/loss=0.705.ckpt  # pre-trained model
   evaluate_all_checkpoints:
 
 sampling:
