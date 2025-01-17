@@ -28,7 +28,7 @@ train:
     min_lr: 0.000125
 
   seed: 42
-  epochs: 3000
+  epochs: 6000
 
   check_val_every_n_epoch: 3
   sample_every_n_batch: 30000
@@ -36,10 +36,10 @@ train:
 
 dataset:
   type: molecule
-  name: GEOM_QM9
-  datadir: data_geom_qm9_riemannian
-  raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/geom_qm9/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42
-  data_split: /home/share/DATA/GEOM/data_split.pkl
+  name: MMFFtoDFT
+  datadir: data_qm9m_alpha1.7_beta0.01_3times
+  raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42_1_2
+  data_split: /home/share/DATA/QM9M/data_split.pkl
   dtype: float32  # deprecated
 
 debug:
@@ -47,7 +47,7 @@ debug:
   save_dynamic:
 
 general:
-  name: finetuning.geom_qm9.rdsm
+  name: finetuning.qm9.rdsm
   # use_wandb: False
   use_wandb: True
   wandb: 'online'
@@ -55,7 +55,7 @@ general:
   gpus: 4
   # gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: ./checkpoints/RDSM.geom_qm9.pretrained.ckpt
+  resume: ./checkpoints/rdsm.qm9.pretrained.ckpt
   test_only:
   evaluate_all_checkpoints:
 

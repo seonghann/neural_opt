@@ -44,10 +44,10 @@ dataset:
 
 debug:
   save_dir: './debug'
-  save_dynamic: './save_dynamic.qm9.EDSM.pt'
+  save_dynamic: './save_dynamic.qm9.edsm.pt'
 
 general:
-  name: qm9.cfm.sampling
+  name: sampling.qm9.edsm
   use_wandb: False
   wandb: 'online'
   save_model: True
@@ -55,7 +55,7 @@ general:
   # gpus: 0
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
-  test_only: ./checkpoints/EDSM.qm9.ckpt
+  test_only: ./checkpoints/edsm.qm9.ckpt
   evaluate_all_checkpoints:
 
 sampling:

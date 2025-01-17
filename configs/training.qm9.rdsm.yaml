@@ -8,7 +8,7 @@ train:
   clip_grad: 100.0
   progress_bar: False
 
-  noise_type: diffusion_custom
+  noise_type: diffusion
   loss_weight: diffusion
   do_scale: false
 
@@ -28,7 +28,7 @@ train:
     min_lr: 0.000125
 
   seed: 42
-  epochs: 6000
+  epochs: 3000
 
   check_val_every_n_epoch: 3
   sample_every_n_batch: 30000
@@ -37,8 +37,8 @@ train:
 dataset:
   type: molecule
   name: MMFFtoDFT
-  datadir: data_qm9m_alpha1.7_beta0.01_3times
-  raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42_1_2
+  datadir: data_qm9m_MMFFtoDFT
+  raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
   data_split: /home/share/DATA/QM9M/data_split.pkl
   dtype: float32  # deprecated
 
@@ -47,7 +47,7 @@ debug:
   save_dynamic:
 
 general:
-  name: finetuning.geom_qm9.rdsm
+  name: training.qm9.rdsm
   # use_wandb: False
   use_wandb: True
   wandb: 'online'
@@ -55,7 +55,7 @@ general:
   gpus: 4
   # gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: ./checkpoints/RDSM.qm9.pretrained.ckpt
+  resume: # ckpt path
   test_only:
   evaluate_all_checkpoints:
 
@@ -79,6 +79,7 @@ model:
   num_atom_feat: 8
 
   append_atom_feat: true
+
   edge_encoder: mlp
   mlp_act: swish
   score_act: swish

@@ -38,66 +38,77 @@ dataset:
   type: molecule
   name: GEOM_QM9
 
-  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
-  # datadir: data_geom_qm9_prop_set_geodiff
-  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_geodiff
-  #
-  # datadir: data_geom_qm9_prop_set_rdkit
-  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_rdkit
-  #
+  # NOTE: ETKDG (ensemble dataset)
+  datadir: data_geom_qm9_prop_set_rdkit
+  raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_rdkit
+  data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
+
+  # NOTE: ETKDG+MMFF (ensemble dataset)
   # datadir: data_geom_qm9_prop_set_rdkit_FF
   # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_rdkit_FF
-  #
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
+
+  # NOTE: ConfGF (ensemble dataset)
   # datadir: data_geom_qm9_prop_set_confgf
   # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_confgf
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
 
-  data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
-  # datadir: data_geom_qm9_test_set_geodiff
-  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_geodiff
-  #
+  # NOTE: GeoDiff (ensemble dataset)
+  # datadir: data_geom_qm9_prop_set_geodiff
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_geodiff
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
+
+  # NOTE: ETKDG (GEOM-QM9 testset)
   # datadir: data_geom_qm9_test_set_rdkit
   # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_rdkit
-  #
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
+
+  # NOTE: ETKDG+MMFF (GEOM-QM9 testset)
   # datadir: data_geom_qm9_test_set_rdkit_FF
   # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_rdkit_FF
-  #
-  datadir: data_geom_qm9_test_set_confgf
-  raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_confgf
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
 
-  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.issue_samples.pkl
-  # datadir: data_geom_qm9_issue_samples
-  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/issue_samples
+  # NOTE: ConfGF (GEOM-QM9 testset)
+  # datadir: data_geom_qm9_test_set_confgf
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_confgf
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
+
+  # NOTE: GeoDiff (GEOM-QM9 testset)
+  # datadir: data_geom_qm9_test_set_geodiff
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_geodiff
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
 
   dtype: float32  # deprecated
 
 debug:
   save_dir: './debug'
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_geodiff.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_geodiff.morse.128steps.pt'
-  #
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit.morse.128steps.pt'
-  #
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit_FF.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit_FF.morse.128steps.pt'
 
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_geodiff.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_geodiff.morse.128steps.pt'
-  #
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit.morse.128steps.pt'
-  #
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit_FF.morse_pretrain.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit_FF.morse.128steps.pt'
-  #
-  # save_dynamic: './save_dynamic.geom_qm9.issue_samples.morse.128steps.clip_norm.pt'
+  # NOTE: ETKDG (ensemble dataset)
+  save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit.rdsm.pt'
 
-  # save_dynamic: './save_dynamic.geom_qm9.prop_set_confgf.morse.128steps.pt'
-  # save_dynamic: './save_dynamic.geom_qm9.test_set_confgf.morse.128steps.pt'
-  save_dynamic: './save_dynamic.geom_qm9.test_set_confgf.morse.128steps.0to3.pt'
+  # NOTE: ETKDG+MMFF (ensemble dataset)
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit_FF.rdsm.pt'
+
+  # NOTE: ConfGF (ensemble dataset)
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_confgf.rdsm.pt'
+
+  # NOTE: GeoDiff (ensemble dataset)
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_geodiff.rdsm.pt'
+
+  # NOTE: ETKDG (GEOM-QM9)
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit.rdsm.pt'
+
+  # NOTE: ETKDG+MMFF (GEOM-QM9)
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit_FF.rdsm.pt'
+
+  # NOTE: ConfGF (GEOM-QM9)
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_confgf.rdsm.pt'
+
+  # NOTE: GeoDiff (GEOM-QM9)
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_geodiff.rdsm.pt'
 
 general:
-  name: qm9.cfm.sampling
+  name: sampling.geom_qm9.rdsm
   use_wandb: False
   wandb: 'online'
   save_model: True
@@ -105,8 +116,8 @@ general:
   # gpus: 0  # for checking CPU time
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
-  # test_only: ./checkpoints/RDSM.geom_qm9.pretrained.ckpt
-  test_only: ./checkpoints/RDSM.geom_qm9.finetuned.ckpt
+  # test_only: ./checkpoints/rdsm.geom_qm9.pretrained.ckpt
+  test_only: ./checkpoints/rdsm.geom_qm9.finetuned.ckpt
   evaluate_all_checkpoints:
 
 sampling:
