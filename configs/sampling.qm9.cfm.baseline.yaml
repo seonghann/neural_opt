@@ -1,6 +1,3 @@
-# config file for load dataset
-# train contains batch_size, num_workers
-
 train:
   batch_size: 300
   num_workers: 1
@@ -11,15 +8,11 @@ train:
   clip_grad: 100.0
   progress_bar: False
 
-  # noise_type: diffusion
-  # loss_weight: diffusion
   noise_type: straight_to_x0
   loss_weight: cfm
   do_scale: false
 
   transform: eq_transform
-  # transform: projection_dx2dq
-  # transform: projection_dq2dx
   transform_at_forward: true
 
   optimizer:
@@ -43,7 +36,6 @@ train:
 
 dataset:
   type: molecule
-
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
   raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
@@ -52,21 +44,18 @@ dataset:
 
 debug:
   save_dir: './debug'
-  save_dynamic: './save_dynamic.baseline.128steps.pt'
+  save_dynamic: './save_dynamic.qm9.EDSM.pt'
 
 general:
   name: qm9.cfm.sampling
   use_wandb: False
   wandb: 'online'
   save_model: True
-  # gpus: 8
   gpus: 1
   # gpus: 0
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: # ckpt path
-  # test_only: ./checkpoints/20240621.qm9.projection_dq2dx.morse.q_loss/epoch=386-valid/rmsd_perr=0.233.ckpt  # BEST!!
-  # test_only: ./checkpoints/qm9.append_atom_featTrue/epoch=3134-valid/loss=124.065.ckpt  # BASELINE
-  test_only: ./checkpoints/20240715.qm9.eq_transform.t0_to_5000/epoch=2999-valid/loss=1682.278.ckpt  # NEW BASELINE
+  resume:
+  test_only: ./checkpoints/EDSM.qm9.ckpt
   evaluate_all_checkpoints:
 
 sampling:
@@ -85,13 +74,10 @@ model:
   pred_type: edge  # edge or node
   hidden_dim: 128
   num_bond_type: 10
-  # num_atom_type: 4
   num_atom_type: 5
   num_atom_feat: 8
 
   append_atom_feat: true
-  # append_atom_feat: false
-
   edge_encoder: mlp
   mlp_act: swish
   score_act: swish
@@ -103,15 +89,13 @@ model:
     cutoff: 10.0
     smooth_conv: False
     mlp_act: swish
-    # hidden_dim: 256
     hidden_dim: 128
 
 diffusion:
-  ## No matter when sampling with CFM
+  # NOTE: No matter when sampling with CFM
   scheduler:
     t0: 0
     t1: 1500
-    # t1: 5000
     name: tsdiff
     beta_start: 1.e-7
     beta_end: 2.e-3
@@ -135,5 +119,4 @@ manifold:
     _min_dt: 1e-4
     pos_adjust_scaler: 0.03
     pos_adjust_thresh: 3e-3
-    # q_type: morse
     q_type: DM

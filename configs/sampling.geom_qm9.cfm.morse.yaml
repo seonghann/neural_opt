@@ -1,0 +1,175 @@
+train:
+  batch_size: 300
+  num_workers: 1
+  lambda_x_train: 1
+  lambda_q_train: 1
+  lambda_x_valid: 1
+  lambda_q_valid: 1
+  clip_grad: 100.0
+  progress_bar: False
+
+  noise_type: straight_to_x0
+  loss_weight: cfm
+  do_scale: false
+
+  transform: projection_dq2dx
+  transform_at_forward: true
+
+  optimizer:
+    type: adam
+    lr: 5.e-4
+    weight_decay: 0.
+    beta1: 0.95
+    beta2: 0.999
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 10
+    min_lr: 0.000125
+
+  seed: 42
+  epochs: 3000
+
+  check_val_every_n_epoch: 3
+  sample_every_n_batch: 1
+  sample_every_n_valid: 1
+
+dataset:
+  type: molecule
+  name: GEOM_QM9
+
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.prop_set.pkl
+  # datadir: data_geom_qm9_prop_set_geodiff
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_geodiff
+  #
+  # datadir: data_geom_qm9_prop_set_rdkit
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_rdkit
+  #
+  # datadir: data_geom_qm9_prop_set_rdkit_FF
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_rdkit_FF
+  #
+  # datadir: data_geom_qm9_prop_set_confgf
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_prop_set_confgf
+
+  data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.test_set.pkl
+  # datadir: data_geom_qm9_test_set_geodiff
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_geodiff
+  #
+  # datadir: data_geom_qm9_test_set_rdkit
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_rdkit
+  #
+  # datadir: data_geom_qm9_test_set_rdkit_FF
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_rdkit_FF
+  #
+  datadir: data_geom_qm9_test_set_confgf
+  raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/xyz_test_set_confgf
+
+  # data_split: /home/share/DATA/NeuralOpt/GEOM-QM9/data_split.issue_samples.pkl
+  # datadir: data_geom_qm9_issue_samples
+  # raw_datadir: /home/share/DATA/NeuralOpt/GEOM-QM9/issue_samples
+
+  dtype: float32  # deprecated
+
+debug:
+  save_dir: './debug'
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_geodiff.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_geodiff.morse.128steps.pt'
+  #
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit.morse.128steps.pt'
+  #
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit_FF.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_rdkit_FF.morse.128steps.pt'
+
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_geodiff.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_geodiff.morse.128steps.pt'
+  #
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit.morse.128steps.pt'
+  #
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit_FF.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_rdkit_FF.morse.128steps.pt'
+  #
+  # save_dynamic: './save_dynamic.geom_qm9.issue_samples.morse.128steps.clip_norm.pt'
+
+  # save_dynamic: './save_dynamic.geom_qm9.prop_set_confgf.morse.128steps.pt'
+  # save_dynamic: './save_dynamic.geom_qm9.test_set_confgf.morse.128steps.pt'
+  save_dynamic: './save_dynamic.geom_qm9.test_set_confgf.morse.128steps.0to3.pt'
+
+general:
+  name: qm9.cfm.sampling
+  use_wandb: False
+  wandb: 'online'
+  save_model: True
+  gpus: 1
+  # gpus: 0  # for checking CPU time
+  strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
+  resume:
+  # test_only: ./checkpoints/RDSM.geom_qm9.pretrained.ckpt
+  test_only: ./checkpoints/RDSM.geom_qm9.finetuned.ckpt
+  evaluate_all_checkpoints:
+
+sampling:
+  score_type: cfm
+  stochastic: False
+  sde_steps: 128
+  sde_dt: 0.01  # deprecated
+  gode_iter: 50
+  gode_ref_dt: 0.05
+  gode_max_dt: 0.1
+  time_margin: 0.0
+  batch_idx_start: 0
+  batch_idx_end: 3
+
+model:
+  name: geodiff
+
+  pred_type: edge  # edge or node
+  hidden_dim: 128
+  num_bond_type: 10
+  num_atom_type: 5
+  num_atom_feat: 8
+
+  append_atom_feat: true
+  edge_encoder: mlp
+  mlp_act: swish
+  score_act: swish
+
+  graph_encoder:
+    name: schnet
+    edge_emb: False
+    num_convs: 7
+    cutoff: 10.0
+    smooth_conv: False
+    mlp_act: swish
+    hidden_dim: 128
+
+diffusion:
+  # NOTE: No matter when sampling with CFM
+  scheduler:
+    t0: 0
+    t1: 150
+    name: tsdiff
+    beta_start: 1.e-7
+    beta_end: 2.e-3
+    num_diffusion_timesteps: 5000
+    scheduler_type: sigmoid
+
+manifold:
+  ode_solver:
+    vpae_thresh: 0.03  # percent error threshold
+    svd_tol: 1e-2
+    alpha: 1.7
+    beta: 0.01
+    gamma: 0.0
+    iter: 3
+    max_iter: 3
+    ref_dt: 5e-2
+    _ref_dt: 1e-3
+    max_dt: 1e-1
+    _max_dt: 5e-2
+    min_dt: 1e-3
+    _min_dt: 1e-4
+    pos_adjust_scaler: 0.0
+    pos_adjust_thresh: 0.0
+    q_type: morse

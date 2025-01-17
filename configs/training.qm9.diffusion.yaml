@@ -1,6 +1,3 @@
-# config file for load dataset
-# train contains batch_size, num_workers
-
 train:
   batch_size: 300
   num_workers: 1
@@ -16,8 +13,6 @@ train:
   do_scale: false
 
   transform: eq_transform
-  # transform: projection_dx2dq
-  # transform: projection_dq2dx
   transform_at_forward: true
 
   optimizer:
@@ -41,7 +36,6 @@ train:
 
 dataset:
   type: molecule
-
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
   raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
@@ -53,12 +47,11 @@ debug:
   save_dynamic:
 
 general:
-  name: 20240715.qm9.eq_transform.t0_to_5000
+  name: qm9.edsm
   # use_wandb: False
   use_wandb: True
   wandb: 'online'
   save_model: True
-  # gpus: 8
   gpus: 4
   # gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
@@ -70,9 +63,7 @@ sampling:
   score_type: diffusion
   pred_type: diffusion
   stochastic: True
-  # sde_dt: 0.1
   sde_dt: 0.01
-  # sde_dt: 0.001
   gode_iter: 50
   gode_ref_dt: 0.05
   gode_max_dt: 0.1
@@ -84,12 +75,10 @@ model:
   pred_type: edge  # edge or node
   hidden_dim: 128
   num_bond_type: 10
-  # num_atom_type: 4
   num_atom_type: 5
   num_atom_feat: 8
 
   append_atom_feat: true
-  # append_atom_feat: false
 
   edge_encoder: mlp
   mlp_act: swish
@@ -102,7 +91,6 @@ model:
     cutoff: 10.0
     smooth_conv: False
     mlp_act: swish
-    # hidden_dim: 256
     hidden_dim: 128
 
 diffusion:
@@ -132,5 +120,4 @@ manifold:
     _min_dt: 1e-4
     pos_adjust_scaler: 0.03
     pos_adjust_thresh: 3e-3
-    # q_type: morse
     q_type: DM

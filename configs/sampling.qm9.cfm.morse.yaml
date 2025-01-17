@@ -1,25 +1,17 @@
-# config file for load dataset
-# train contains batch_size, num_workers
-
 train:
   batch_size: 300
   num_workers: 1
-  lambda_x_train: 1
+  lambda_x_train: 0
   lambda_q_train: 1
-  lambda_x_valid: 1
+  lambda_x_valid: 0
   lambda_q_valid: 1
   clip_grad: 100.0
   progress_bar: False
 
-  # noise_type: diffusion
-  # noise_type: diffusion_geodesic
-  # loss_weight: diffusion
   noise_type: straight_to_x0
   loss_weight: cfm
   do_scale: false
 
-  # transform: eq_transform
-  # transform: projection_dx2dq
   transform: projection_dq2dx
   transform_at_forward: true
 
@@ -44,7 +36,6 @@ train:
 
 dataset:
   type: molecule
-
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
   raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
@@ -53,23 +44,20 @@ dataset:
 
 debug:
   save_dir: './debug'
-  # save_dynamic: './save_dynamic.morse.128steps.pt'
-  save_dynamic: './save_dynamic.morse_pretrain.128steps.pt'
+  # save_dynamic: './save_dynamic.qm9.RDSM.pretrained.pt'
+  save_dynamic: './save_dynamic.qm9.RDSM.finetuned.pt'
 
 general:
   name: qm9.cfm.sampling
   use_wandb: False
-  # use_wandb: True
   wandb: 'online'
   save_model: True
-  # gpus: 8
   gpus: 1
-  # gpus: 0  # for checking CPU time
+  # gpus: 0
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: # ckpt path
-  # test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240814.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times/epoch=5909-valid/loss=0.001.ckpt
-  # test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240826.qm9.finetuning.morse.projection_dq2dx.alpha1.7_beta0.01.t0to150.3times.keepgoing/epoch=5969-valid/norm_perr=0.158.ckpt  # BEST norm_perr
-  test_only: /home/jhwoo/Projects/neural_opt/pl_test/checkpoints/20240725.qm9.morse.projection_dq2dx.rescale_dq.t0to1500/epoch=2999-valid/loss=0.705.ckpt  # pre-trained model
+  resume:
+  # test_only: ./checkpoints/RDSM.qm9.pretrained.ckpt
+  test_only: ./checkpoints/RDSM.qm9.finetuned.ckpt
   evaluate_all_checkpoints:
 
 sampling:
@@ -88,13 +76,10 @@ model:
   pred_type: edge  # edge or node
   hidden_dim: 128
   num_bond_type: 10
-  # num_atom_type: 4
   num_atom_type: 5
   num_atom_feat: 8
 
   append_atom_feat: true
-  # append_atom_feat: false
-
   edge_encoder: mlp
   mlp_act: swish
   score_act: swish
@@ -106,15 +91,13 @@ model:
     cutoff: 10.0
     smooth_conv: False
     mlp_act: swish
-    # hidden_dim: 256
     hidden_dim: 128
 
 diffusion:
-  ## No matter when sampling with CFM
+  # NOTE: No matter when sampling with CFM
   scheduler:
     t0: 0
     t1: 1500
-    # t1: 5000
     name: tsdiff
     beta_start: 1.e-7
     beta_end: 2.e-3
@@ -128,8 +111,6 @@ manifold:
     alpha: 1.7
     beta: 0.01
     gamma: 0.0
-    # iter: 30
-    # max_iter: 1000
     iter: 3
     max_iter: 3
     ref_dt: 5e-2
@@ -141,4 +122,3 @@ manifold:
     pos_adjust_scaler: 0.0
     pos_adjust_thresh: 0.0
     q_type: morse
-    # q_type: DM
