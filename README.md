@@ -3,10 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/seonghann/neural_opt/tree/refactoring/LICENSE)
 
 Refer the paper, **"Riemannian Denoising Score Matching for Molecular Optimization with Chemical Accuracy"**.
-
 [[arXiv]](https://arxiv.org/abs/2411.19769)
 
-![Cover Image](assets/Schematic.pdf)
+![Cover Image](assets/Schematic.png)
 
 ---
 
