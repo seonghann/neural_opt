@@ -1027,10 +1027,10 @@ class BridgeDiffusion(pl.LightningModule):
 
             start = time.time()
             for i, batch in enumerate(tqdm(self.trainer.datamodule.test_dataloader(), total=len(self.trainer.datamodule.test_dataloader()))):
-                if i < self.config.sampling.batch_idx_start:
-                    continue
-                if i > self.config.sampling.batch_idx_end:
-                    break
+                # if i < self.config.sampling.batch_idx_start:
+                #     continue
+                # if i > self.config.sampling.batch_idx_end:
+                #     break
 
                 if i % self.config.train.sample_every_n_batch == 0:
                     batch = batch.to(self.device)
@@ -1446,8 +1446,9 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             raise NotImplementedError()
 
+        print("[sample_batch_simple] start sampling")
         while (t > 1e-6).any():
-            print(f"t={t[0]}")
+            print(f"t={t[0]}", end=", ")
             dt = dt.clip(max=t)
 
             # dx = score_function(dynamic_graph, dt, stochastic)
@@ -1471,8 +1472,8 @@ class BridgeDiffusion(pl.LightningModule):
             t -= dt
 
             pos = center_pos(pos, batch.batch)
-
             dynamic_graph.update_graph(pos, batch.batch, score=dx, t=t)
+        print("\n[sample_batch_simple] sampling finished")
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)

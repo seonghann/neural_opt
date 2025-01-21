@@ -2,9 +2,9 @@ train:
   batch_size: 300
   num_workers: 1
   lambda_x_train: 1
-  lambda_q_train: 0
+  lambda_q_train: 1
   lambda_x_valid: 1
-  lambda_q_valid: 0
+  lambda_q_valid: 1
   clip_grad: 100.0
   progress_bar: False
 
