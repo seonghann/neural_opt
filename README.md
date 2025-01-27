@@ -52,8 +52,8 @@ To reproduce the results from the paper:
 ```bash
 # Sampling (generates 'save_dynamic.qm9.rdsm.finetuned.pt')
 python main.py configs/sampling.qm9.rdsm.yaml
-# Performance evaluation
-python eval_accuracy2.py \
+# Performance evaluation (calculates RMSD, D-MAE, etc.)
+python evaluate_accuracy.py \
   --config_yaml configs/sampling.qm9.rdsm.yaml \
   --prb_pt save_dynamic.qm9.rdsm.finetuned.pt \
   --ban_index /home/share/DATA/QM9M/wrong_samples.pkl

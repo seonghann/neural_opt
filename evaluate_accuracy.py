@@ -163,10 +163,9 @@ if __name__ == "__main__":
         ban_index = []
     else:
         ban_index = pickle.load(open(args.ban_index, "rb"))
-    ###########################################################################
 
-    ###########################################################################
-    ## Load reference pos
+
+    # NOTE: Load reference pos
     from dataset.data_module import load_datamodule
     from omegaconf import OmegaConf
 
@@ -181,11 +180,9 @@ if __name__ == "__main__":
         pos_ref_list.extend(pos_ref)
 
         data_idx_list.extend(batch.idx)
-    ###########################################################################
 
 
-    ###########################################################################
-    ## Load prb pos
+    # NOTE: Load prb pos
     data = torch.load(args.prb_pt, map_location="cpu")
     print(f"Load {args.prb_pt}")
 
@@ -207,10 +204,9 @@ if __name__ == "__main__":
 
         smarts = batch.smarts
         smarts_list.extend(smarts)
-    ###########################################################################
 
 
-    ###########################################################################
+    # NOTE: Calculate RMSD, DMAE, q_norm
     from utils.geodesic_solver import GeodesicSolver
 
     geodesic_solver = GeodesicSolver(config.manifold)
@@ -263,7 +259,7 @@ if __name__ == "__main__":
         q_norm_list.append(q_norm)
         q_norm_list_xT.append(q_norm_xT)
 
-        print(f"it: {i}, data_idx: {data_idx}, rmsd: {rmsd_xT} > {rmsd}, dmae: {dmae_xT} > {dmae}, q_norm: {q_norm_xT} > {q_norm}")
+        # print(f"it: {i}, data_idx: {data_idx}, rmsd: {rmsd_xT} > {rmsd}, dmae: {dmae_xT} > {dmae}, q_norm: {q_norm_xT} > {q_norm}")
 
     rmsd_list = torch.tensor(rmsd_list)
     dmae_list = torch.tensor(dmae_list)
@@ -298,13 +294,15 @@ if __name__ == "__main__":
         df.to_csv(args.save_csv)
         print(f"Save {args.save_csv}")
 
-    print(f"x0 vs predicted")
+    print("=" * 100)
+    print("Statistics")
+    print("# of data: ", len(rmsd_list))
+    print(f"[x0 vs predicted]")
     print(f"RMSD   (mean, median): {rmsd_list.mean():.3g}, {rmsd_list.median():.3g}")
     print(f"DMAE   (mean, median): {dmae_list.mean():.3g}, {dmae_list.median():.3g}")
     print(f"q_norm (mean, median): {q_norm_list.mean():.3g}, {q_norm_list.median():.3g}")
 
-    print("=" * 100)
-    print(f"x0 vs xT")
+    print(f"[x0 vs xT]")
     print(f"RMSD   (mean, median): {rmsd_list_xT.mean():.3g}, {rmsd_list_xT.median():.3g}")
     print(f"DMAE   (mean, median): {dmae_list_xT.mean():.3g}, {dmae_list_xT.median():.3g}")
     print(f"q_norm (mean, median): {q_norm_list_xT.mean():.3g}, {q_norm_list_xT.median():.3g}")
@@ -313,10 +311,10 @@ if __name__ == "__main__":
     print(f"RMSD   (Q1, Q3): {np.percentile(rmsd_list_xT, 25):.3g}, {np.percentile(rmsd_list_xT, 75):.3g}")
     print(f"DMAE   (Q1, Q3): {np.percentile(dmae_list_xT, 25):.3g}, {np.percentile(dmae_list_xT, 75):.3g}")
     print(f"q_norm (Q1, Q3): {np.percentile(q_norm_list_xT, 25):.3g}, {np.percentile(q_norm_list_xT, 75):.3g}")
+    print("=" * 100)
 
-    print("# of data: ", len(rmsd_list))
-    ###########################################################################
 
+    # NOTE: Save xyz files
     if args.save_dir:
         import os
 
@@ -329,15 +327,8 @@ if __name__ == "__main__":
 
             smarts = smarts_list[i]
             atom_type = remap2atomic_numbers(_atom_type)
-
-            # atoms_ref = Atoms(symbols=atom_type, positions=pos_ref)
             atoms_gen = Atoms(symbols=atom_type, positions=pos_gen)
-            # atoms_xT = Atoms(symbols=atom_type, positions=xT)
-
-            # comment = f"DFT(B3LYP/6-31G(2df,p)) idx={idx} GeodesicLength=0.0 smarts=\"{smarts}\""
             comment = f"idx={idx} smarts=\"{smarts}\" rmsd={rmsd_list[i]} dmae={dmae_list[i]} q_norm={q_norm_list[i]}"
             filename = f"./{args.save_dir}/idx{idx}.xyz"
             atoms_gen.write(filename, comment=comment)
             print(f"Save {filename}")
-
-            # if i == 3: exit("DEBUG")
