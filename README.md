@@ -16,17 +16,28 @@ Refer the paper, **"Riemannian Denoising Score Matching for Molecular Optimizati
 To set up the environment, use the following commands:
 
 ```bash
-conda create -n neural_opt_reproduce python=3.9.16 pytorch==2.0.1 pytorch-cuda=11.7 -c pytorch -c nvidia
-pip install torch-geometric==2.3.1 torch-scatter==2.1.2+pt20cu117 torch-cluster==1.6.3+pt20cu117 torch-sparse==0.6.18+pt20cu117 pytorch-lightning==2.1.3 -f https://data.pyg.org/whl/torch-2.0.0+cu117.html
-pip install matplotlib pandas==2.0.3
-python setup.py develop
+conda create -n neural_opt_cu118 python=3.9 -y
+conda activate neural_opt_cu118
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.7.0+cu118.html
+pip install torch-geometric==2.6.1
+pip install pytorch-lightning==2.2.4 matplotlib pandas==2.2.2
+pip install rdkit==2025.3.2
+pip install ase==3.25.0
+pip install scipy==1.13.1
+pip install omegaconf==2.3.0
+pip install wandb==0.20.1
 ```
 
 ---
 
 ## Dataset
 
-Details will be provided soon.
+Data processing details are described in the `data/qm9m` directory.
+
+Processed data can be downloaded from our Zenodo repository: [https://zenodo.org/records/15561806](https://zenodo.org/records/15561806)
+
+The Zenodo repository contains both the processed datasets and the data processing codes used in this work.
 
 
 ## Training

@@ -42,6 +42,8 @@ python run_dataloader.py \
   --results_path test.random.pt
 ```
 
+For a detailed analysis of RMSD statistics, see `statistics.ipynb`.
+
 
 ## 2. Denoising Experiment (Optional)
 To run denoising experiments from preprocessed data:
