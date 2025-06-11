@@ -91,7 +91,7 @@ class GrambowDataset(InMemoryDataset):
         self.raw_datadir = raw_datadir
         self.data_split = data_split
         super(GrambowDataset, self).__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[self.file_idx])
+        self.data, self.slices = torch.load(self.processed_paths[self.file_idx], weights_only=False)
         return
 
     @property
@@ -265,7 +265,7 @@ class QM9Dataset(InMemoryDataset):
         self.raw_datadir = raw_datadir
         self.data_split = data_split
         super(QM9Dataset, self).__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[self.file_idx])
+        self.data, self.slices = torch.load(self.processed_paths[self.file_idx], weights_only=False)
         return
 
     @property
