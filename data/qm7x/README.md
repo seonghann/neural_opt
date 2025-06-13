@@ -12,7 +12,6 @@ Change paths to fit your environment.
 python run_dataloader.py \
   --datapath /home/jeheon/programs/MoreRed/src/morered/data \
   --split_file /home/jeheon/programs/MoreRed/src/morered/configs/data/split.npz \
-  --model_path /home/jeheon/programs/MoreRed/src/morered/runs/a179c79e-41e1-11f0-9674-b44506f055df/best_model \
   --batch_size 100 \
   --seed 42 \
   --sample_mode random \
@@ -23,7 +22,6 @@ python run_dataloader.py \
 python run_dataloader.py \
   --datapath /home/jeheon/programs/MoreRed/src/morered/data \
   --split_file /home/jeheon/programs/MoreRed/src/morered/configs/data/split.npz \
-  --model_path /home/jeheon/programs/MoreRed/src/morered/runs/a179c79e-41e1-11f0-9674-b44506f055df/best_model \
   --batch_size 100 \
   --seed 42 \
   --sample_mode random \
@@ -34,7 +32,6 @@ python run_dataloader.py \
 python run_dataloader.py \
   --datapath /home/jeheon/programs/MoreRed/src/morered/data \
   --split_file /home/jeheon/programs/MoreRed/src/morered/configs/data/split.npz \
-  --model_path /home/jeheon/programs/MoreRed/src/morered/runs/a179c79e-41e1-11f0-9674-b44506f055df/best_model \
   --batch_size 100 \
   --seed 42 \
   --sample_mode random \
@@ -54,9 +51,17 @@ python run_dataloader.py \
   --split_file /home/jeheon/programs/MoreRed/src/morered/configs/data/split.npz \
   --model_path /home/jeheon/programs/MoreRed/src/morered/runs/a179c79e-41e1-11f0-9674-b44506f055df/best_model \
   --seed 42 \
-  --sample_mode median \
   --denoising \
-  --preprocessed_data test.random.pt
+  --preprocessed_data test.random.pt \
+  --results_path denoise.random.pt
+```
+
+To evaluate the denoised results:
+
+```bash
+python evaluate_accuracy_morered.py \
+  --config_yaml ../../configs/sampling.qm7x.rdsm.yaml \
+  --prb_pt denoise.random.pt
 ```
 
 

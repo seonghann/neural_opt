@@ -1295,7 +1295,7 @@ class BridgeDiffusion(pl.LightningModule):
             #     continue
             if (t > start_from_time).any():
                 continue
-            print(f"Debug: t={t[0]}")
+            # print(f"Debug: t={t[0]}")
             node_eq = self.forward(dynamic_graph.to("cuda"))[0]
 
             loss_weight_type = self.config.train.loss_weight

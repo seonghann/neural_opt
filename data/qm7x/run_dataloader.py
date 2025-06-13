@@ -1,8 +1,3 @@
-"""
-dataloader로부터 xyz 파일로 저장하는 스크립트 (for R-DSM training)
-
-각 xyz 파일은 2개의 구조 정보로 구성. (eq and non-eq structures)
-"""
 import argparse
 import os
 from random import choice
@@ -40,13 +35,14 @@ def sample_noneq_sample(
 
     # 100개의 non-equilibrium 구조 중 선택.
     n_samples = 100
-    if mode  == "random":
+    if mode == "random":
         noneq_key = choice(range(1, n_samples + 1))
         data = load_system_by_key(key, noneq_key, base_dir=base_dir)
         return data
     else:
         data_list = [
-            load_system_by_key(key, noneq_key, base_dir=base_dir) for noneq_key in range(1, n_samples + 1)
+            load_system_by_key(key, noneq_key, base_dir=base_dir)
+            for noneq_key in range(1, n_samples + 1)
         ]
         rmsd_list = torch.tensor([data["rmsd"] for data in data_list]).reshape(-1)
         sorted_indices = sorted(range(len(rmsd_list)), key=lambda i: rmsd_list[i])
@@ -62,7 +58,9 @@ def sample_noneq_sample(
         return data_list[chosen_idx]
 
 
-def batch_process_noneq(batch, metadata, suffix="_noneq", sample_mode="random", datapath="../data/"):
+def batch_process_noneq(
+    batch, metadata, suffix="_noneq", sample_mode="random", datapath="../data/"
+):
     """
     Augments a batch of equilibrium molecular structures with corresponding non-equilibrium data.
 
@@ -81,12 +79,8 @@ def batch_process_noneq(batch, metadata, suffix="_noneq", sample_mode="random", 
     # Extract mapping keys from metadata using global indices
     print("Mapping keys from metadata...")
     smiles_ids = [metadata["groups_ids"]["smiles_id"][i] for i in batch["_idx"]]
-    stereo_iso_ids = [
-        metadata["groups_ids"]["stereo_iso_id"][i] for i in batch["_idx"]
-    ]
-    conform_ids = [
-        metadata["groups_ids"]["conform_id"][i] for i in batch["_idx"]
-    ]
+    stereo_iso_ids = [metadata["groups_ids"]["stereo_iso_id"][i] for i in batch["_idx"]]
+    conform_ids = [metadata["groups_ids"]["conform_id"][i] for i in batch["_idx"]]
 
     # Get non-equilibrium samples
     sampled = [
@@ -145,7 +139,7 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        required=True,
+        default=None,
         help="Path to the trained MoreRed-JT model file",
     )
     parser.add_argument(
@@ -209,8 +203,8 @@ def main():
 
     if args.denoising:
         assert os.path.exists(
-                args.model_path
-            ), f"model_path {args.model_path} does not exist."
+            args.model_path
+        ), f"model_path {args.model_path} does not exist."
 
         # Define sampler (MoreRed-JT)
         noise_schedule = PolynomialSchedule(
@@ -240,7 +234,9 @@ def main():
         print(f"Loaded preprocessed data from {args.preprocessed_data}")
     else:
         # Load equilibrium data module
-        assert os.path.exists(args.datapath), f"datapath {args.datapath} does not exist."
+        assert os.path.exists(
+            args.datapath
+        ), f"datapath {args.datapath} does not exist."
         assert os.path.exists(
             args.split_file
         ), f"split_file {args.split_file} does not exist."
@@ -304,9 +300,16 @@ def main():
         if args.preprocessed_data is None:
             print("Processing batch...")
             start = time.perf_counter()
-            batch = batch_process_noneq(batch, data_all.dataset.metadata, sample_mode=args.sample_mode, datapath=args.datapath)
+            batch = batch_process_noneq(
+                batch,
+                data_all.dataset.metadata,
+                sample_mode=args.sample_mode,
+                datapath=args.datapath,
+            )
             _batch_center_systems_inplace(batch)
-            print(f"Batch {i+1}/{num_batches} processed in {time.perf_counter() - start:.4f} seconds")
+            print(
+                f"Batch {i+1}/{num_batches} processed in {time.perf_counter() - start:.4f} seconds"
+            )
 
         if args.denoising:
             # Denoise non-equilibrium structures using the MoreRed-JT sampler
@@ -315,7 +318,9 @@ def main():
             relaxed_jt, num_steps_jt, hist_jt = mrd_jt_sampler.denoise(
                 batch, max_steps=1000
             )
-            print(f"Batch {i+1}/{num_batches} denoised in {time.perf_counter() - start:.4f} seconds")
+            print(
+                f"Batch {i+1}/{num_batches} denoised in {time.perf_counter() - start:.4f} seconds"
+            )
 
             tmp_batch = {key: val.clone() for key, val in batch.items()}
             tmp_batch.update({properties.R: relaxed_jt[properties.R]})

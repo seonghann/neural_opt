@@ -1,10 +1,10 @@
 train:
   batch_size: 300
   num_workers: 1
-  lambda_x_train: 0
-  lambda_q_train: 1
-  lambda_x_valid: 0
-  lambda_q_valid: 1
+  lambda_x_train: 1
+  lambda_q_train: 0
+  lambda_x_valid: 1
+  lambda_q_valid: 0
   clip_grad: 100.0
   progress_bar: False
 
@@ -12,7 +12,7 @@ train:
   loss_weight: diffusion
   do_scale: false
 
-  transform: projection_dq2dx
+  transform: eq_transform
   transform_at_forward: true
 
   optimizer:
@@ -47,8 +47,8 @@ debug:
   save_dynamic:
 
 general:
-  name: training.qm7x.rdsm
-  # use_wandb: False  # debugging
+  name: qm7x.edsm
+  # use_wandb: False
   use_wandb: True
   wandb: 'online'
   save_model: True
@@ -78,6 +78,7 @@ model:
   # num_atom_type: 5
   num_atom_type: 7
   num_atom_feat: 8
+
   append_atom_feat: true
 
   edge_encoder: mlp
@@ -96,7 +97,7 @@ model:
 diffusion:
   scheduler:
     t0: 0
-    t1: 1500
+    t1: 5000
     name: tsdiff
     beta_start: 1.e-7
     beta_end: 2.e-3
@@ -118,6 +119,6 @@ manifold:
     _max_dt: 1e+9
     min_dt: 1e-3
     _min_dt: 1e-4
-    pos_adjust_scaler: 0.0
-    pos_adjust_thresh: 0.0
-    q_type: morse
+    pos_adjust_scaler: 0.03
+    pos_adjust_thresh: 3e-3
+    q_type: DM
