@@ -46,6 +46,7 @@ debug:
   save_dir: './debug'
   # save_dynamic: './save_dynamic.qm9.rdsm.pretrained.pt'
   save_dynamic: './save_dynamic.qm9.rdsm.finetuned.pt'
+  save_dynamic_final_only: true
 
 general:
   name: sampling.qm9.rdsm

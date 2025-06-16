@@ -52,7 +52,7 @@ class BridgeDiffusion(pl.LightningModule):
             raise NotImplementedError
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
-        self.dynamic_graph_list = []
+        self.dynamic_graph_list = []  # for storing results of all trajectories
 
         lambda_x_train = config.train.lambda_x_train
         lambda_q_train = config.train.lambda_q_train
@@ -1391,7 +1391,10 @@ class BridgeDiffusion(pl.LightningModule):
                 print(f"t={i}: dmae to ref (mean)= {dmae_to_ref.mean()}")
             #########################################################
 
-            dynamic_graph.update_graph(pos, batch.batch, score=node_eq, t=t)
+            if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
+                dynamic_graph.update_graph(pos, score=node_eq, t=t)
+            else:
+                dynamic_graph.update_graph(pos, append=False)
 
             if torch.isnan(pos).any():
                 print("NaN detected. Please restart.")
@@ -1401,6 +1404,9 @@ class BridgeDiffusion(pl.LightningModule):
                 pos = torch.clamp(pos, min=-clip_pos, max=clip_pos)
             # pos_traj.append(pos.clone().cpu())
 
+        if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
+            # Add final position to the trajectory
+            dynamic_graph.update_graph(pos, score=node_eq, t=t)
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
@@ -1430,11 +1436,9 @@ class BridgeDiffusion(pl.LightningModule):
         t = torch.ones(batch.num_graphs, device=pos.device)
         t -= self.config.sampling.time_margin # (G, )
 
-        # t = t.index_select(0, node2graph)
-        # dt = torch.ones_like(t) * self.config.sampling.sde_dt
         dt = torch.ones_like(t) / self.config.sampling.sde_steps
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
-        dynamic_graph.pos_traj.append(pos.to("cpu"))
+        dynamic_graph.pos_traj.append(pos.to("cpu"))  # add initial position
 
         ## Set score function
         if self.config.sampling.score_type == "ddbm_score":
@@ -1451,7 +1455,6 @@ class BridgeDiffusion(pl.LightningModule):
             print(f"t={t[0]}", end=", ")
             dt = dt.clip(max=t)
 
-            # dx = score_function(dynamic_graph, dt, stochastic)
             dx = score_function(
                 dynamic_graph,
                 dt,
@@ -1470,10 +1473,17 @@ class BridgeDiffusion(pl.LightningModule):
 
             pos -= dx
             t -= dt
-
             pos = center_pos(pos, batch.batch)
-            dynamic_graph.update_graph(pos, batch.batch, score=dx, t=t)
+
+            if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
+                dynamic_graph.update_graph(pos, score=dx, t=t)
+            else:
+                dynamic_graph.update_graph(pos, append=False)
         print("\n[sample_batch_simple] sampling finished")
+
+        if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
+            # Add final position to the trajectory
+            dynamic_graph.update_graph(pos, score=dx, t=t)
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
@@ -1486,7 +1496,6 @@ class BridgeDiffusion(pl.LightningModule):
 
         ## Save dynamic_graph object
         if self.config.debug.save_dynamic:
-            # self.dynamic_graph.append(dynamic_graph)
             self.dynamic_graph_list.append(dynamic_graph)
 
         return samples
@@ -1496,6 +1505,7 @@ class BridgeDiffusion(pl.LightningModule):
     ##################################################################################################
     @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
+        # Geodesic ODE solve
         graph = self.graph.from_batch(batch)
         node2graph = batch.batch
 
@@ -1619,14 +1629,17 @@ class BridgeDiffusion(pl.LightningModule):
                 ban_node_mask = torch.isin(node2graph, ban_index)
                 pos_tm1[ban_node_mask] = pos[ban_node_mask] + torch.randn_like(pos[ban_node_mask]) * 1e-3
 
-            # dynamic_graph.update_graph(pos.clone(), batch.batch, score=score.clone(), t=t)
             t = t - dt
             pos = pos_tm1
 
-            # dynamic_graph.update_graph(pos, batch.batch, score=score, t=t)
-            dynamic_graph.update_graph(pos, batch.batch, score=dq, t=t)
+            if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
+                dynamic_graph.update_graph(pos, score=dq, t=t)
+            else:
+                dynamic_graph.update_graph(pos, append=False)
 
-        # dynamic_graph.update_graph(pos.clone(), batch.batch.clone(), score=None, t=t)
+        if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
+            # Add final position to the trajectory
+            dynamic_graph.update_graph(pos, score=dq, t=t)
 
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
         samples = []

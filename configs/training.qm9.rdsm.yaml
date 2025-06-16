@@ -45,6 +45,7 @@ dataset:
 debug:
   save_dir: './debug'
   save_dynamic:
+  save_dynamic_final_only: true
 
 general:
   name: training.qm9.rdsm

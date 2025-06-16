@@ -25,9 +25,9 @@ The following commands generate noisy structures on the Riemannian manifold and 
 Using multiple random seeds introduces structural diversity in training data:
 
 ```bash
-python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-6 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42 --save_csv ./alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150.sampling.csv --seed 42
-python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-6 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed1 --save_csv test.csv --seed 1
-python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-6 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed2 --save_csv test.csv --seed 2
+python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-2 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42 --save_csv ./alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150.sampling.csv --seed 42
+python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-2 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed1 --save_csv test.csv --seed 1
+python riemannian_data_sampling.py --config_yaml ./riemannian_data_sampling.yaml --sampling_type riemannian --alpha 1.7 --beta 0.01 --svd_tol 1e-2 --t0 0 --t1 150 --save_xyz xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed2 --save_csv test.csv --seed 2
 ```
 
 
@@ -72,5 +72,6 @@ To visualize distributions of RMSD, DMAE, and q-norms:
 ```bash
 python plot_distribution.py \
   --sampling_csv ./alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150.sampling.csv \
-  --analyzing_csv ./alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150.analyzing.csv
+  --analyzing_csv ./alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150.analyzing.csv \
+  --visualize
 ```

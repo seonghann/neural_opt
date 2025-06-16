@@ -45,9 +45,11 @@ dataset:
 debug:
   save_dir: './debug'
   save_dynamic:
+  save_dynamic_final_only: true
 
 general:
-  name: training.qm7x.rdsm
+  # name: training.qm7x.rdsm
+  name: rdsm.qm7x.pretrained.20250613
   # use_wandb: False  # debugging
   use_wandb: True
   wandb: 'online'
@@ -96,7 +98,8 @@ model:
 diffusion:
   scheduler:
     t0: 0
-    t1: 1500
+    # t1: 1500
+    t1: 2500
     name: tsdiff
     beta_start: 1.e-7
     beta_end: 2.e-3

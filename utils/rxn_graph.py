@@ -444,14 +444,17 @@ class DynamicMolGraph(MolGraph):
         )
         return graph
 
-    def update_graph(self, pos, batch, score=None, t=None):
+    # def update_graph(self, pos, batch, score=None, t=None):
+    def update_graph(self, pos, score=None, t=None, append=True):
         self.update(pos, self.pos_init)
-        self.pos_traj.append(pos.to("cpu"))
-        if score is not None:
-            self.score_traj.append(score.to("cpu"))
-        if t is not None:
-            self.time_traj.append(t.to("cpu"))
-            self.t = t
+
+        if append:
+            self.pos_traj.append(pos.to("cpu"))
+            if score is not None:
+                self.score_traj.append(score.to("cpu"))
+            if t is not None:
+                self.time_traj.append(t.to("cpu"))
+                self.t = t
         self.pos = pos
         return
 
@@ -528,14 +531,17 @@ class DynamicRxnGraph(RxnGraph):
         )
         return graph
 
-    def update_graph(self, pos, batch, score=None, t=None):
+    # def update_graph(self, pos, batch, score=None, t=None):
+    def update_graph(self, pos, score=None, t=None, append=True):
         self.update(pos, self.pos_init)
-        self.pos_traj.append(pos.to("cpu"))
-        if score is not None:
-            self.score_traj.append(score.to("cpu"))
-        if t is not None:
-            self.time_traj.append(t.to("cpu"))
-            self.t = t
+
+        if append:
+            self.pos_traj.append(pos.to("cpu"))
+            if score is not None:
+                self.score_traj.append(score.to("cpu"))
+            if t is not None:
+                self.time_traj.append(t.to("cpu"))
+                self.t = t
         self.pos = pos
         return
 
