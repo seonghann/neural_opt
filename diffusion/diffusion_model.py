@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 
 import wandb
 from tqdm.auto import tqdm
-
+import random
 from utils.wandb_utils import setup_wandb
 from utils.rxn_graph import RxnGraph, DynamicRxnGraph, MolGraph, DynamicMolGraph
 from utils.geodesic_solver import GeodesicSolver
@@ -53,7 +53,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         self.noise_schedule = load_noise_scheduler(config.diffusion)
         self.dynamic_graph_list = []  # for storing results of all trajectories
-
+        self.use_graph_prob = getattr(config.train, 'graph_condition_prob', 1.0)
         lambda_x_train = config.train.lambda_x_train
         lambda_q_train = config.train.lambda_q_train
         lambda_x_valid = config.train.lambda_x_valid
@@ -258,7 +258,7 @@ class BridgeDiffusion(pl.LightningModule):
         else:
             raise NotImplementedError
         noisy_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, tt)
-        print(f"Debug: tt={tt}")
+        # print(f"Debug: tt={tt}")
         return noisy_graph, target_x, target_q
 
     def forward(self, graph):
@@ -341,7 +341,7 @@ class BridgeDiffusion(pl.LightningModule):
         t0 = self.config.diffusion.scheduler.t0
         t1 = self.config.diffusion.scheduler.t1
         time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
-        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        # print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
         time_step = time_step.sort()[0]
         a = self.noise_schedule.get_alpha(time_step, device=device)
 
@@ -422,7 +422,7 @@ class BridgeDiffusion(pl.LightningModule):
         t0 = self.config.diffusion.scheduler.t0
         t1 = self.config.diffusion.scheduler.t1
         time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
-        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        # print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
         time_step = time_step.sort()[0]
         a = self.noise_schedule.get_alpha(time_step, device=device)
 
@@ -533,6 +533,7 @@ class BridgeDiffusion(pl.LightningModule):
     def apply_straight_to_x0(self, data, do_scale=False):
         """No noised version. (straight line approximation.)"""
         graph = self.graph.from_batch(data)
+
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
         node2graph = graph.batch
@@ -852,6 +853,8 @@ class BridgeDiffusion(pl.LightningModule):
 
     def training_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
+        if random.random() > self.use_graph_prob:
+            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         if wandb.run:
@@ -900,6 +903,8 @@ class BridgeDiffusion(pl.LightningModule):
 
     def validation_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
+        if random.random() > self.use_graph_prob:
+            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         loss = self.valid_loss(
@@ -984,6 +989,8 @@ class BridgeDiffusion(pl.LightningModule):
 
     def test_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
+        if random.random() > self.use_graph_prob:
+            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         loss = self.test_loss(

@@ -21,14 +21,16 @@ BOND_TYPES_DECODER[0] = None
 ATOM_ENCODER = {
     "GetIsAromatic": {
         False: 0,
-        True: 1
+        True: 1,
+        None: 2  # dummy value
     },
     "GetFormalCharge": {
         -2: 0,
         -1: 1,
         0: 2,
         1: 3,
-        2: 4
+        2: 4,
+        None: 5  # dummy value
     },
     "GetTotalNumHs": {
         0: 0,
@@ -37,6 +39,7 @@ ATOM_ENCODER = {
         3: 3,
         4: 4,
         5: 5,
+        None: 6  # dummy value
     },
     "GetTotalValence": {
         0: 0,
@@ -48,6 +51,7 @@ ATOM_ENCODER = {
         6: 6,
         7: 7,
         8: 8,
+        None: 9  # dummy value
     },
     "GetTotalDegree": {
         0: 0,
@@ -58,12 +62,20 @@ ATOM_ENCODER = {
         5: 5,
         6: 6,
         7: 7,
+        None: 8  # dummy value
     },
-    "GetHybridization": HYBRID_ENCODER,
-    "GetChiralTag": CHIRAL_ENCODER,
+    "GetHybridization": {
+        **HYBRID_ENCODER,
+        None: len(HYBRID_ENCODER)  # dummy value
+    },
+    "GetChiralTag": {
+        **CHIRAL_ENCODER,
+        None: len(CHIRAL_ENCODER)  # dummy value
+    },
     "IsInRing": {
         False: 0,
-        True: 1
+        True: 1,
+        None: 2  # dummy value
     },
 }
 
