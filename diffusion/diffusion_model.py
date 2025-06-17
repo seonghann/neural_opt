@@ -257,6 +257,8 @@ class BridgeDiffusion(pl.LightningModule):
             )
         else:
             raise NotImplementedError
+        if random.random() > self.use_graph_prob:
+            graph.reset_to_dummy()
         noisy_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, tt)
         # print(f"Debug: tt={tt}")
         return noisy_graph, target_x, target_q
@@ -853,8 +855,6 @@ class BridgeDiffusion(pl.LightningModule):
 
     def training_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
-        if random.random() > self.use_graph_prob:
-            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         if wandb.run:
@@ -903,8 +903,6 @@ class BridgeDiffusion(pl.LightningModule):
 
     def validation_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
-        if random.random() > self.use_graph_prob:
-            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         loss = self.valid_loss(
@@ -989,8 +987,6 @@ class BridgeDiffusion(pl.LightningModule):
 
     def test_step(self, data, i):
         graph, target_x, target_q = self.noise_sampling(data)
-        if random.random() > self.use_graph_prob:
-            graph.reset_to_dummy()
         pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
         loss = self.test_loss(
@@ -1228,6 +1224,8 @@ class BridgeDiffusion(pl.LightningModule):
             return a
 
         graph = self.graph.from_batch(batch)
+        if not self.config.sampling.graph_condition:
+            graph.reset_to_dummy()
         pos_init = batch.pos[:, -1, :]
         pos = torch.randn_like(pos_init) * sigmas[-1]
 
@@ -1434,6 +1432,8 @@ class BridgeDiffusion(pl.LightningModule):
     def sample_batch_simple(self, batch, stochastic=False):
         ## Make DynamicRxnGraph
         graph = self.graph.from_batch(batch)
+        if not self.config.sampling.graph_condition:
+            graph.reset_to_dummy()
         node2graph = batch.batch
 
         pos = batch.pos[:, -1, :]
