@@ -1043,6 +1043,11 @@ class BridgeDiffusion(pl.LightningModule):
                             stochastic=stochastic,
                             start_from_time=self.config.sampling.start_from_time,
                         )
+                    elif self.config.sampling.score_type == "fixed_point_exp":
+                        batch_out = self.sample_batch_gradient_descent(
+                            batch, 
+                            stochastic=False,
+                        )
                     else:
                         batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
@@ -1202,6 +1207,38 @@ class BridgeDiffusion(pl.LightningModule):
         # return -score * dt
         # return -score * dt, -score_q * dt
         return -score_x, -score_q
+
+    @torch.no_grad()
+    def predict_vector(
+        self,
+        graph,
+        dt,
+        batch=None,  # for debugging
+        **kwargs,
+    ):
+        """
+        Vector field prediction: v(x, \theta) \approx x^{*} - x
+        where x^{*} is the fixed point of the vector field.
+        The displacement is computed as:
+            dx = v(x, \theta) * dt
+        Args:
+            graph: DynamicRxnGraph
+            dt: float
+            debug: bool
+            batch: Batch
+        Returns:
+            dx: (G, N, 3)
+            dq: (G, E, 1)
+        """
+        assert self.config.train.do_scale == False
+
+        v_x, v_q = self.forward(graph)[:2]#[0]
+        node2graph = batch.batch
+        edge_index = graph.full_edge(upper_triangle=True)[0]
+        edge2graph = node2graph.index_select(0, edge_index[0])
+        dx = dt.index_select(0, node2graph).unsqueeze(-1) * v_x
+        dq = dt.index_select(0, edge2graph).unsqueeze(-1) * v_q
+        return dx, dq
 
     @torch.no_grad()
     def sample_batch_diffusion(
@@ -1491,6 +1528,90 @@ class BridgeDiffusion(pl.LightningModule):
         if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
             # Add final position to the trajectory
             dynamic_graph.update_graph(pos, score=dx, t=t)
+
+        ## Save trajectory
+        traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
+        samples = []
+        for i in range(batch.num_graphs):
+            d = batch[i]
+            traj_i = traj[(batch.batch == i).to("cpu")]
+            d.traj = traj_i
+            samples.append(d)
+
+        ## Save dynamic_graph object
+        if self.config.debug.save_dynamic:
+            self.dynamic_graph_list.append(dynamic_graph)
+
+        return samples
+
+    @torch.no_grad()
+    def sample_batch_gradient_descent(self, batch, stochastic=False):
+        graph = self.graph.from_batch(batch)
+        if not self.config.sampling.graph_condition:
+            graph.reset_to_dummy()
+
+        pos = batch.pos[:, -1, :]
+        pos = center_pos(pos, batch.batch)
+        pos_init = pos.clone()
+
+        t = torch.zeros(batch.num_graphs, device=pos.device)
+        T = self.config.sampling.fixed_point_exp.total_time
+
+        dt = torch.ones_like(t) * self.config.sampling.fixed_point_exp.dt
+        dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
+        dynamic_graph.pos_traj.append(pos.to("cpu"))  # add initial position
+
+        ## Set score function
+        score_function = self.predict_vector
+        if not self.config.sampling.fixed_point_exp.use_exp_map:
+            kwargs = {
+                "q_type": self.q_type,
+                "num_iter": self.config.manifold.ode_solver.iter,
+                "max_iter": self.config.manifold.ode_solver.max_iter,
+                "ref_dt": self.config.manifold.ode_solver._ref_dt,
+                "min_dt": self.config.manifold.ode_solver._min_dt,
+                "max_dt": self.config.manifold.ode_solver._max_dt,
+                "err_thresh": self.config.manifold.ode_solver.vpae_thresh,
+                "verbose": 0,
+                "method": "RK4",
+            }
+            full_edge = dynamic_graph.full_edge(upper_triangle=True)[0]
+            atom_type = dynamic_graph.atom_type
+            node2graph = batch.batch
+            num_nodes = batch.batch.bincount()
+            args = (
+                full_edge,
+                atom_type,
+                node2graph,
+                num_nodes,
+            )
+            solve = self.geodesic_solver.batch_geodesic_ode_solve
+
+        print("[sample_batch_simple] start sampling")
+        while (t < T).any():
+            print(f"t={t[0]}", end=", ")
+            dt = dt.clip(max=T - t)
+            dx, dq = score_function(
+                dynamic_graph,
+                dt,
+                stochastic=stochastic,
+                batch=batch,
+            )
+            # update pos and t
+            if not self.config.sampling.fixed_point_exp.use_exp_map:
+                # use RK4 to solve the ODE
+                init, last, iter, index_tensor, stats = solve(pos, dq, *args, **kwargs)
+                pos = last["x"]
+            else:
+                pos += dx
+            t += dt
+            pos = center_pos(pos, batch.batch)
+
+            if self.config.sampling.fixed_point_exp.save_vector_field:
+                dynamic_graph.update_graph(pos, score=dx, t=t)
+            else:
+                dynamic_graph.update_graph(pos, append=True)
+        print("\n[sample_batch_simple] sampling finished")
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
