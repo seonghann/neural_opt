@@ -444,8 +444,7 @@ class DynamicMolGraph(MolGraph):
         )
         return graph
 
-    # def update_graph(self, pos, batch, score=None, t=None):
-    def update_graph(self, pos, score=None, t=None, append=True):
+    def update_graph(self, pos, t, score=None, append=True):
         self.update(pos, self.pos_init)
 
         if append:
@@ -454,7 +453,7 @@ class DynamicMolGraph(MolGraph):
                 self.score_traj.append(score.to("cpu"))
             if t is not None:
                 self.time_traj.append(t.to("cpu"))
-                self.t = t
+        self.t = t
         self.pos = pos
         return
 

@@ -1401,9 +1401,9 @@ class BridgeDiffusion(pl.LightningModule):
             #########################################################
 
             if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
-                dynamic_graph.update_graph(pos, score=node_eq, t=t)
+                dynamic_graph.update_graph(pos, t=t, score=node_eq)
             else:
-                dynamic_graph.update_graph(pos, append=False)
+                dynamic_graph.update_graph(pos, t=t, append=False)
 
             if torch.isnan(pos).any():
                 print("NaN detected. Please restart.")
@@ -1415,7 +1415,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
             # Add final position to the trajectory
-            dynamic_graph.update_graph(pos, score=node_eq, t=t)
+            dynamic_graph.update_graph(pos, t=t, score=node_eq)
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
@@ -1467,6 +1467,7 @@ class BridgeDiffusion(pl.LightningModule):
             print(f"Debug: cycle: {cycle + 1}/{num_cycles}")
             # Reset time for each cycle
             t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin  # (G, )
+            dynamic_graph.update_graph(pos, t=t, append=False)
             dt = dt_base.clone()
 
             # Sampling loop (1 -> 0)
@@ -1491,15 +1492,15 @@ class BridgeDiffusion(pl.LightningModule):
                 pos = center_pos(pos, batch.batch)
 
                 if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
-                    dynamic_graph.update_graph(pos, score=dx, t=t)
+                    dynamic_graph.update_graph(pos, t=t, score=dx)
                 else:
-                    dynamic_graph.update_graph(pos, append=False)
+                    dynamic_graph.update_graph(pos, t=t, append=False)
 
         print("\n[sample_batch_simple] sampling finished")
 
         if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
             # Add final position to the trajectory
-            dynamic_graph.update_graph(pos, score=dx, t=t)
+            dynamic_graph.update_graph(pos, t=t, score=dx)
 
         ## Save trajectory
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
@@ -1646,13 +1647,13 @@ class BridgeDiffusion(pl.LightningModule):
             pos = pos_tm1
 
             if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
-                dynamic_graph.update_graph(pos, score=dq, t=t)
+                dynamic_graph.update_graph(pos, t=t, score=dq)
             else:
-                dynamic_graph.update_graph(pos, append=False)
+                dynamic_graph.update_graph(pos, t=t, append=False)
 
         if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
             # Add final position to the trajectory
-            dynamic_graph.update_graph(pos, score=dq, t=t)
+            dynamic_graph.update_graph(pos, t=t, score=dq)
 
         traj = torch.stack(dynamic_graph.pos_traj).transpose(0, 1).flip(dims=(1,))  # (N, T, 3)
         samples = []
