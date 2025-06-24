@@ -112,23 +112,47 @@ def load_system_by_key(
 
 
 if __name__ == "__main__":
-    # Test
+
+    # Copied from morered.datasets.qm7x
+    energy = "energy"  # ePBE0+MBD: total energy
+    EPBE0 = "EPBE0"  # ePBE0: total energy at the level of PBE0
+    EMBD = "EMBD"  # eMBD: total energy at the level of MBD
+    RMSD = "rmsd"  # root mean square deviation from the equilibrium structure
+
+    property_unit_dict = {
+        energy: "eV",
+        EPBE0: "eV",
+        EMBD: "eV",
+        RMSD: "Ang",
+    }
+
+    property_dataset_keys = {
+        energy: "ePBE0+MBD",
+        EPBE0: "ePBE0",
+        EMBD: "eMBD",
+        RMSD: "sRMSD",
+    }
+
+    # Path to the QM7x dataset (change to fit your setup)
+    base_dir = "/home/jeheon/programs/MoreRed/src/morered/data"
+    datapath = os.path.join(base_dir, "qm7x.db")
+    split_file_path = "/home/jeheon/programs/MoreRed/src/morered/configs/data/split.npz"
 
     timing = False
     if timing:
         st = time.perf_counter()
-        data = [load_system_by_key((10, 1, 1), i, base_dir="../data/") for i in range(1, 100)]
+        data = [load_system_by_key((10, 1, 1), i, base_dir=base_dir) for i in range(1, 100)]
         print(f"Time taken: {time.perf_counter() - st:.2f} seconds")
         print(data)
 
 
     data_eq = QM7X(
-        datapath="../data/qm7x.db",
+        datapath=datapath,
         raw_data_path=None,
         remove_duplicates=True,
         only_equilibrium=True,
-        batch_size=2,
-        split_file="../configs/data/split.npz",
+        batch_size=1,
+        split_file=split_file_path,
         num_workers=8,
         distance_unit="Ang",
         property_units={"energy": "eV"},
@@ -152,6 +176,6 @@ if __name__ == "__main__":
     for sid, iid, cid in zip(smiles_ids, stereo_iso_ids, conform_ids):
         key = (sid, iid, cid)
         print("key = ", key)
-        data = load_system_by_key(key, None, base_dir="../data/")
+        data = load_system_by_key(key, None, base_dir=base_dir)
         data_list.append(data)
     print("_atoms_collate_fn(data_list)=\n", _atoms_collate_fn(data_list))

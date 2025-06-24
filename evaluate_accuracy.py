@@ -33,6 +33,82 @@ class EvaluationMetrics:
     dmae_xT: float
     q_norm_xT: float
 
+    ePBE0_xT: float
+    eMBD_xT: float
+    ePBE0_x0: float
+    eMBD_x0: float
+    ePBE0_gen: float
+    eMBD_gen: float
+
+
+class EnergyCalculator:
+    @staticmethod
+    def _total_corrected_energy(mol: Atoms, to_gpu: bool = False) -> float:
+        """Calculate PBE0+MBD w/ def2-TZVP total energy of a molecule.
+
+        Returns:
+            tuple[float, float]: (e_scf, e_mbd) energies in Hartree.
+                            Returns (np.nan, np.nan) if calculation fails.
+        """
+        from pyscf import gto, dft
+        from pymbd import mbd_energy_species
+        import warnings
+
+        e_scf, e_mbd = np.nan, np.nan
+
+        try:
+            species = mol.get_chemical_symbols()
+            coords_ang = mol.get_positions()
+            coords_bohr = coords_ang * 1.889725989  # Å to Bohr
+            volume_ratios = [1.0] * len(species)
+
+            # MBD energy calculation
+            try:
+                e_mbd = mbd_energy_species(
+                    coords=coords_bohr.tolist(),
+                    species=species,
+                    volume_ratios=volume_ratios,
+                    beta=0.83,
+                )
+            except Exception as e:
+                warnings.warn(f"MBD calculation failed: {str(e)}")
+                e_mbd = np.nan
+
+            # PySCF calculation (PBE0, def2-TZVP)
+            try:
+                mol_pyscf = gto.Mole()
+                mol_pyscf.atom = [(s, tuple(c)) for s, c in zip(species, coords_ang)]
+                mol_pyscf.basis = "def2-TZVP"
+                mol_pyscf.charge = 0
+                mol_pyscf.spin = 0  # Closed-shell assumption
+                mol_pyscf.build()
+
+                mf = dft.RKS(mol_pyscf, xc="PBE0").density_fit()
+                if to_gpu:
+                    try:
+                        mf = mf.to_gpu()
+                    except Exception as gpu_error:
+                        warnings.warn(
+                            f"GPU initialization failed, falling back to CPU: {str(gpu_error)}"
+                        )
+                        # Continue with CPU calculation
+
+                e_scf = mf.kernel()
+
+                # Check if SCF converged
+                if not mf.converged:
+                    warnings.warn("SCF calculation did not converge")
+                    e_scf = np.nan
+
+            except Exception as e:
+                warnings.warn(f"PySCF calculation failed: {str(e)}")
+                e_scf = np.nan
+
+        except Exception as e:
+            warnings.warn(f"Unexpected error in energy calculation: {str(e)}")
+
+        return e_scf, e_mbd
+
 
 class GeometryMetrics:
     """Static methods for calculating molecular geometry metrics."""
@@ -103,6 +179,8 @@ class GeometryMetrics:
         pos_xT: torch.Tensor,
         atom_type_tensor: torch.Tensor,
         atomic_numbers: Optional[torch.Tensor] = None,
+        calculate_energy: bool = False,
+        gpu: bool = True,
     ) -> EvaluationMetrics:
         """Calculate all metrics for a molecule."""
         # Convert atom types if needed
@@ -129,6 +207,28 @@ class GeometryMetrics:
         dmae_xT = self.calc_dmae(pos_ref, pos_xT).item()
         q_norm_xT = self.calc_q_norm(pos_ref, pos_xT, atom_type_indices).item()
 
+        if calculate_energy:
+            print(f"Debug: Start energy calculation for {len(atoms_xT)} atoms")
+            # Calculate energies if requested
+            ePBE0_xT, eMBD_xT = EnergyCalculator._total_corrected_energy(
+                atoms_xT, to_gpu=gpu
+            )
+            ePBE0_ref, eMBD_ref = EnergyCalculator._total_corrected_energy(
+                atoms_ref, to_gpu=gpu
+            )
+            ePBE0_gen, eMBD_gen = EnergyCalculator._total_corrected_energy(
+                atoms_gen, to_gpu=gpu
+            )
+            print(f"Debug: rmsd={rmsd}, dmae={dmae}, q_norm={q_norm}")
+            print(
+                f"Debug: Delta E (xT - ref) = {((ePBE0_xT + eMBD_xT) - (ePBE0_ref + eMBD_ref)) * 627.509} kcal/mol"
+            )
+            print(
+                f"Debug: Delta E (gen - ref) = {((ePBE0_gen + eMBD_gen) - (ePBE0_ref + eMBD_ref)) * 627.509} kcal/mol"
+            )
+        else:
+            ePBE0_xT = eMBD_xT = ePBE0_ref = eMBD_ref = ePBE0_gen = eMBD_gen = None
+
         return EvaluationMetrics(
             rmsd=rmsd,
             dmae=dmae,
@@ -136,6 +236,12 @@ class GeometryMetrics:
             rmsd_xT=rmsd_xT,
             dmae_xT=dmae_xT,
             q_norm_xT=q_norm_xT,
+            ePBE0_xT=ePBE0_xT,
+            eMBD_xT=eMBD_xT,
+            ePBE0_x0=ePBE0_ref,
+            eMBD_x0=eMBD_ref,
+            ePBE0_gen=ePBE0_gen,
+            eMBD_gen=eMBD_gen,
         )
 
 
@@ -254,9 +360,12 @@ class ResultsHandler:
 
     @staticmethod
     def create_dataframe_from_metrics(
-        metrics_list: List[EvaluationMetrics], data_idx_list: Optional[List[int]] = None
+        metrics_list: List[EvaluationMetrics],
+        data_idx_list: Optional[List[int]] = None,
+        calculate_energy: bool = False,
     ) -> pd.DataFrame:
         """Create a pandas DataFrame from list of metrics."""
+
         data = {
             "rmsd_xT": [m.rmsd_xT for m in metrics_list],
             "rmsd": [m.rmsd for m in metrics_list],
@@ -265,6 +374,23 @@ class ResultsHandler:
             "q_norm_xT": [m.q_norm_xT for m in metrics_list],
             "q_norm": [m.q_norm for m in metrics_list],
         }
+        if calculate_energy:
+            data["ePBE0_xT"] = [m.ePBE0_xT for m in metrics_list]  # unit: eV
+            data["eMBD_xT"] = [m.eMBD_xT for m in metrics_list]  # unit: eV
+            data["ePBE0_x0"] = [m.ePBE0_x0 for m in metrics_list]  # unit: eV
+            data["eMBD_x0"] = [m.eMBD_x0 for m in metrics_list]  # unit: eV
+            data["ePBE0_gen"] = [m.ePBE0_gen for m in metrics_list]  # unit: eV
+            data["eMBD_gen"] = [m.eMBD_gen for m in metrics_list]  # unit: eV
+
+            energy_x0 = np.array(data["ePBE0_x0"]) + np.array(data["eMBD_x0"])
+            energy = np.array(data["ePBE0_gen"]) + np.array(data["eMBD_gen"])
+            energy_xT = np.array(data["ePBE0_xT"]) + np.array(data["eMBD_xT"])
+            data["delta_E"] = (
+                abs(energy - energy_x0) * 627.509
+            ).tolist()  # unit: kcal/mol
+            data["delta_E_xT"] = (
+                abs(energy_xT - energy_x0) * 627.509
+            ).tolist()  # unit: kcal/mol
 
         if data_idx_list is not None:
             data["data_idx"] = data_idx_list
@@ -273,7 +399,7 @@ class ResultsHandler:
         return df.sort_values(by="rmsd")
 
     @staticmethod
-    def print_statistics(df: pd.DataFrame):
+    def print_statistics(df: pd.DataFrame, calculate_energy: bool = False):
         """Print comprehensive statistics of the evaluation results."""
         print("=" * 100)
         print("Statistics")
@@ -281,6 +407,8 @@ class ResultsHandler:
 
         # Convert tensor columns to numpy for statistics
         metrics = ["rmsd", "dmae", "q_norm"]
+        if calculate_energy:
+            metrics.append("delta_E")
         stats_data = {}
 
         for metric in metrics:
@@ -419,6 +547,8 @@ class MolecularEvaluator:
         data_idx_list: List[int],
         align_target: str = "none",
         ban_index: List[int] = None,
+        calculate_energy: bool = False,
+        gpu: bool = True,
     ) -> pd.DataFrame:
         """Evaluate all molecules and return DataFrame with results."""
         if ban_index is None:
@@ -459,7 +589,12 @@ class MolecularEvaluator:
 
             # Calculate metrics
             molecule_metrics = self.metrics_calculator.calculate_metrics(
-                pos_ref, pos_gen, xT, atom_type_tensor
+                pos_ref,
+                pos_gen,
+                xT,
+                atom_type_tensor,
+                calculate_energy=calculate_energy,
+                gpu=gpu,
             )
 
             # Store results
@@ -468,7 +603,7 @@ class MolecularEvaluator:
 
         # Convert to DataFrame and sort
         df = ResultsHandler.create_dataframe_from_metrics(
-            metrics_list, valid_data_idx_list
+            metrics_list, valid_data_idx_list, calculate_energy=calculate_energy
         )
         print("Sorted with rmsd")
 
@@ -526,6 +661,16 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--save_csv", type=str, default=None, help="Path to save results CSV file"
     )
+    parser.add_argument(
+        "--calculate_energy",
+        action="store_true",
+        help="Calculate energy differences (requires pyscf and pymbd)",
+    )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Use GPU for energy calculations (requires PySCF to support GPU)",
+    )
 
     return parser.parse_args()
 
@@ -546,7 +691,13 @@ def main():
 
     # Evaluate molecules
     results_df = evaluator.evaluate_all_molecules(
-        pos_ref_list, predicted_data, data_idx_list, args.align_target, ban_index
+        pos_ref_list,
+        predicted_data,
+        data_idx_list,
+        args.align_target,
+        ban_index,
+        calculate_energy=args.calculate_energy,
+        gpu=args.gpu,
     )
 
     # Configure display and show results
@@ -559,7 +710,7 @@ def main():
         print(f"Saved {args.save_csv}")
 
     # Print statistics
-    ResultsHandler.print_statistics(results_df)
+    ResultsHandler.print_statistics(results_df, args.calculate_energy)
 
     # Save XYZ files if requested
     if args.save_dir:

@@ -62,6 +62,13 @@ To evaluate the denoised results:
 python evaluate_accuracy_morered.py \
   --config_yaml ../../configs/sampling.qm7x.rdsm.yaml \
   --prb_pt denoise.random.pt
+
+# evaluation including energy calculations
+python evaluate_accuracy_morered.py \
+  --config_yaml ../../configs/sampling.qm7x.rdsm.yaml \
+  --prb_pt denoise.random.pt \
+  --calculate_energy --gpu \
+  --save_csv denoise.random.csv
 ```
 
 

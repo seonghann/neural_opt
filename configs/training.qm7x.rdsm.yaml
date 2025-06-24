@@ -1,6 +1,6 @@
 train:
   batch_size: 300
-  num_workers: 1
+  num_workers: 8
   lambda_x_train: 0
   lambda_q_train: 1
   lambda_x_valid: 0

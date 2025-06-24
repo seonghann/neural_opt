@@ -960,7 +960,11 @@ class BridgeDiffusion(pl.LightningModule):
                             start_from_time=self.config.sampling.start_from_time,
                         )
                     else:
-                        batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
+                        batch_out = self.sample_batch_simple(
+                            batch,
+                            stochastic=stochastic,
+                            num_cycles=self.config.sampling.num_cycles,
+                        )
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
                     samples.extend(batch_out)
             self.print(f"Done. Sampling took {time.time() - start:0.1f}s")
@@ -1041,7 +1045,11 @@ class BridgeDiffusion(pl.LightningModule):
                             start_from_time=self.config.sampling.start_from_time,
                         )
                     else:
-                        batch_out = self.sample_batch_simple(batch, stochastic=stochastic)
+                        batch_out = self.sample_batch_simple(
+                            batch,
+                            stochastic=stochastic,
+                            num_cycles=self.config.sampling.num_cycles,
+                        )
                         # batch_out = self.sample_batch(batch, stochastic=stochastic)
                         # print(f"Debug: Run sample_batch with ODE!!!!!!!!!!!!!!!!!!!!!!!!")
                     samples.extend(batch_out)
@@ -1052,6 +1060,7 @@ class BridgeDiffusion(pl.LightningModule):
         ## Save dynamic_graph object
         if self.config.debug.save_dynamic:
             torch.save(self.dynamic_graph_list, self.config.debug.save_dynamic)
+            print(f"Saved dynamic graph to {self.config.debug.save_dynamic}")
         return
 
     @torch.no_grad()
@@ -1424,10 +1433,13 @@ class BridgeDiffusion(pl.LightningModule):
         return samples
 
     @torch.no_grad()
-    def sample_batch_simple(self, batch, stochastic=False):
-        ## Make DynamicRxnGraph
+    def sample_batch_simple(self, batch, stochastic=False, clip=None, num_cycles=1):
+        """
+        Sample molecular structures with a specified score function.
+        """
+        # Make DynamicRxnGraph
         graph = self.graph.from_batch(batch)
-        node2graph = batch.batch
+        # node2graph = batch.batch
 
         pos = batch.pos[:, -1, :]
         pos = center_pos(pos, batch.batch)
@@ -1436,7 +1448,7 @@ class BridgeDiffusion(pl.LightningModule):
         t = torch.ones(batch.num_graphs, device=pos.device)
         t -= self.config.sampling.time_margin # (G, )
 
-        dt = torch.ones_like(t) / self.config.sampling.sde_steps
+        dt_base = torch.ones_like(t) / self.config.sampling.sde_steps
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
         dynamic_graph.pos_traj.append(pos.to("cpu"))  # add initial position
 
@@ -1451,34 +1463,38 @@ class BridgeDiffusion(pl.LightningModule):
             raise NotImplementedError()
 
         print("[sample_batch_simple] start sampling")
-        while (t > 1e-6).any():
-            print(f"t={t[0]}", end=", ")
-            dt = dt.clip(max=t)
+        for cycle in range(num_cycles):
+            print(f"Debug: cycle: {cycle + 1}/{num_cycles}")
+            # Reset time for each cycle
+            t = torch.ones(batch.num_graphs, device=pos.device) - self.config.sampling.time_margin  # (G, )
+            dt = dt_base.clone()
 
-            dx = score_function(
-                dynamic_graph,
-                dt,
-                stochastic=stochastic,
-                # debug=True,
-                debug=False,
-                batch=batch,
-            )[0]
+            # Sampling loop (1 -> 0)
+            while (t > 1e-6).any():
+                print(f"t={t[0]}", end=", ")
+                dt = dt.clip(max=t)
 
-            # NOTE: DEBUG
-            # clip = 0.1 # 1 # 100
-            # dx_norm = dx.norm(dim=-1)
-            # mask = dx_norm > clip
-            # dx[mask] = dx[mask] * (clip / dx_norm[mask]).unsqueeze(1)
-            # dx = clip_norm(dx, limit=clip)
+                dx = score_function(
+                    dynamic_graph,
+                    dt,
+                    stochastic=stochastic,
+                    debug=False,
+                    batch=batch,
+                )[0]
 
-            pos -= dx
-            t -= dt
-            pos = center_pos(pos, batch.batch)
+                # Apply gradient clipping if specified
+                if clip is not None:
+                    dx = clip_norm(dx, limit=clip)
 
-            if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
-                dynamic_graph.update_graph(pos, score=dx, t=t)
-            else:
-                dynamic_graph.update_graph(pos, append=False)
+                pos -= dx
+                t -= dt
+                pos = center_pos(pos, batch.batch)
+
+                if self.config.debug.save_dynamic and not self.config.debug.save_dynamic_final_only:
+                    dynamic_graph.update_graph(pos, score=dx, t=t)
+                else:
+                    dynamic_graph.update_graph(pos, append=False)
+
         print("\n[sample_batch_simple] sampling finished")
 
         if self.config.debug.save_dynamic and self.config.debug.save_dynamic_final_only:
@@ -1500,9 +1516,6 @@ class BridgeDiffusion(pl.LightningModule):
 
         return samples
 
-    ##################################################################################################
-    ##################################################################################################
-    ##################################################################################################
     @torch.no_grad()
     def sample_batch(self, batch, stochastic=True):
         # Geodesic ODE solve

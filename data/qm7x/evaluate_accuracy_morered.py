@@ -24,8 +24,12 @@ from evaluate_accuracy import (
 class SimplifiedMolecularEvaluator:
     """Simplified evaluator that reuses base components for alternative data format."""
 
-    def __init__(self, config_path: str):
+    def __init__(
+        self, config_path: str, calculate_energy: bool = False, gpu: bool = False
+    ):
         self.config = OmegaConf.load(config_path)
+        self.calculate_energy = calculate_energy
+        self.gpu = gpu
         self.geodesic_solver = GeodesicSolver(self.config.manifold)
         self.metrics_calculator = GeometryMetrics(self.geodesic_solver)
         self.results_handler = ResultsHandler()
@@ -45,7 +49,13 @@ class SimplifiedMolecularEvaluator:
 
         # Use the shared metrics calculator
         return self.metrics_calculator.calculate_metrics(
-            pos_ref, pos_gen, pos_xT, None, atomic_numbers
+            pos_ref,
+            pos_gen,
+            pos_xT,
+            None,
+            atomic_numbers,
+            calculate_energy=self.calculate_energy,
+            gpu=self.gpu,
         )
 
     def evaluate_all_samples(
@@ -113,6 +123,16 @@ def parse_arguments() -> argparse.Namespace:
         default=None,
         help="Path to save accuracy results as CSV file",
     )
+    parser.add_argument(
+        "--calculate_energy",
+        action="store_true",
+        help="Calculate energy differences (requires pyscf and pymbd)",
+    )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Use GPU for calculations (requires CUDA setup)",
+    )
 
     return parser.parse_args()
 
@@ -123,7 +143,9 @@ def main():
     print(f"Arguments: {args}")
 
     # Create simplified evaluator and run evaluation
-    evaluator = SimplifiedMolecularEvaluator(args.config_yaml)
+    evaluator = SimplifiedMolecularEvaluator(
+        args.config_yaml, calculate_energy=args.calculate_energy, gpu=args.gpu
+    )
     results_df = evaluator.run_evaluation(args.prb_pt, args.save_csv)
 
     return results_df
