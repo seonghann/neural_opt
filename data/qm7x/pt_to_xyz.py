@@ -98,13 +98,17 @@ if __name__ == "__main__":
             filename = f"{args.save_dir}/idx{idx}.xyz"
             write(filename, atoms, format="xyz", append=False, comment=comment)
 
-
             # Write the noneq structure
             atoms = Atoms(positions=sample['_positions_noneq'].numpy(),
                           numbers=sample['_atomic_numbers_noneq'].numpy())
             comment = (
                 f'non-equilibrium idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
             )
+            # atoms = Atoms(positions=sample['_positions'].numpy(),  # Using MoreRed results as initial structures
+            #               numbers=sample['_atomic_numbers'].numpy())
+            # comment = (
+            #     f'MoreRed-results idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
+            # )
             write(filename, atoms, format="xyz", append=True, comment=comment)
             print(f"Write {filename}")
 
