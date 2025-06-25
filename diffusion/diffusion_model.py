@@ -263,6 +263,21 @@ class BridgeDiffusion(pl.LightningModule):
         # print(f"Debug: tt={tt}")
         return noisy_graph, target_x, target_q
 
+    def get_normalized_time(self, graph):
+        """Get normalized time based on configuration."""
+        if not getattr(self.config.model, 'use_time_embedding', False):
+            return None
+            
+        time_normalization = getattr(self.config.model, 'time_normalization', 't1')
+        
+        if time_normalization == 't1':
+            max_timesteps = self.config.diffusion.scheduler.t1
+        else:  # 'num_diffusion_timesteps'
+            max_timesteps = self.config.diffusion.scheduler.num_diffusion_timesteps
+            
+        normalized_time = graph.t.float() / max_timesteps
+        return normalized_time
+
     def forward(self, graph):
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
@@ -270,12 +285,15 @@ class BridgeDiffusion(pl.LightningModule):
         edge2graph = node2graph.index_select(0, edge_index[0])
         num_nodes = node2graph.bincount()
 
+        # Get normalized time for time embedding
+        normalized_time = self.get_normalized_time(graph)
+
         ## 2. Prediction
         if self.pred_type == "node":
-            pred_x = self.NeuralNet(graph).squeeze()
+            pred_x = self.NeuralNet(graph, normalized_time=normalized_time).squeeze()
             pred_q = torch.zeros(*edge2graph.shape, dtype=pred_x.dtype, device=pred_x.device)
         elif self.pred_type == "edge":
-            pred_q = self.NeuralNet(graph).squeeze()
+            pred_q = self.NeuralNet(graph, normalized_time=normalized_time).squeeze()
             pred_x = torch.zeros((len(node2graph), 3), dtype=pred_q.dtype, device=pred_q.device)
 
             if self.q_type == "morse":
