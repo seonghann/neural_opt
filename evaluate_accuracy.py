@@ -373,7 +373,10 @@ class MolecularEvaluator:
         pos_ref_list = []
         data_idx_list = []
 
-        for batch in self.datamodule.test_dataloader():
+        for i, batch in enumerate(self.datamodule.test_dataloader()):
+            if i % self.config.train.sample_every_n_batch != 0:
+                continue
+
             natoms = batch.batch.bincount()
             pos_ref = batch.pos[:, 0, :].split(natoms.tolist())
             pos_ref_list.extend(pos_ref)
@@ -381,7 +384,7 @@ class MolecularEvaluator:
 
         return pos_ref_list, data_idx_list
 
-    def load_predicted_data(self, prb_pt_path: str) -> Dict[str, List]:
+    def load_predicted_data(self, prb_pt_path: str, t_idx: int = -1) -> Dict[str, List]:
         """Load predicted positions and related data from file."""
         data = torch.load(prb_pt_path, map_location="cpu", weights_only=False)
         print(f"Load {prb_pt_path}")
@@ -394,7 +397,8 @@ class MolecularEvaluator:
         for batch in data:
             natoms = batch.batch.bincount()
 
-            pos = batch.pos.split(natoms.tolist())
+            # pos = batch.pos.split(natoms.tolist())
+            pos = batch.pos_traj[t_idx].split(natoms.tolist())
             pos_list.extend(pos)
 
             xT = batch.pos_traj[0].split(natoms.tolist())
@@ -526,6 +530,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--save_csv", type=str, default=None, help="Path to save results CSV file"
     )
+    parser.add_argument(
+        "--t_idx", type=int, default=-1, help="Index of trajectory to use"
+    )
 
     return parser.parse_args()
 
@@ -542,7 +549,7 @@ def main():
     # Load data
     ban_index = load_ban_index(args.ban_index)
     pos_ref_list, data_idx_list = evaluator.load_reference_data()
-    predicted_data = evaluator.load_predicted_data(args.prb_pt)
+    predicted_data = evaluator.load_predicted_data(args.prb_pt, t_idx=args.t_idx)
 
     # Evaluate molecules
     results_df = evaluator.evaluate_all_molecules(

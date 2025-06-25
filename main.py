@@ -53,8 +53,12 @@ if __name__ == '__main__':
 
     ## Load model
     model = BridgeDiffusion(config)
-
+    if hasattr(config.general, 'init_from_ckpt'):
+        state_dict = torch.load(config.general.init_from_ckpt, map_location='cpu')['state_dict']
+        model.load_state_dict(state_dict)
+        print(f"model loaded from {config.general.init_from_ckpt}")
     callbacks = []
+
     if config.general.save_model:
         # You can remove empty directories named by '{epoch}-valid'
         # $ find . -type d -empty -exec rm -r {} +

@@ -178,7 +178,7 @@ class BridgeDiffusion(pl.LightningModule):
             )
             if rescale_dq:
                 norm_q_new = scatter_sum(score_q.square(), edge2graph).sqrt()
-                print(f"Debug: norm_q / norm_q_new (> 1.)={norm_q / norm_q_new}")
+                # print(f"Debug: norm_q / norm_q_new (> 1.)={norm_q / norm_q_new}")
                 rescale = (norm_q / norm_q_new).index_select(0, edge2graph)
                 score_q *= rescale
 
@@ -985,31 +985,31 @@ class BridgeDiffusion(pl.LightningModule):
         if self.local_rank == 0:
             setup_wandb(self.config)
 
-    def test_step(self, data, i):
-        graph, target_x, target_q = self.noise_sampling(data)
-        pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
+    # def test_step(self, data, i):
+    #     graph, target_x, target_q = self.noise_sampling(data)
+    #     pred_x, pred_q, edge_index, node2graph, edge2graph = self.forward(graph)
 
-        loss = self.test_loss(
-            pred_x=pred_x,
-            pred_q=pred_q,
-            true_x=target_x,
-            true_q=target_q,
-            merge_edge=edge2graph,
-            merge_node=node2graph,
-            weight=self.get_loss_weight(graph.t),
-        )
-        self.test_metrics(
-            pred_x,
-            pred_q,
-            target_x,
-            target_q,
-            edge2graph,
-            node2graph,
-            edge_index=edge_index,
-            pos=graph.pos,
-            log=True,
-        )
-        return {'loss': loss}
+    #     loss = self.test_loss(
+    #         pred_x=pred_x,
+    #         pred_q=pred_q,
+    #         true_x=target_x,
+    #         true_q=target_q,
+    #         merge_edge=edge2graph,
+    #         merge_node=node2graph,
+    #         weight=self.get_loss_weight(graph.t),
+    #     )
+    #     self.test_metrics(
+    #         pred_x,
+    #         pred_q,
+    #         target_x,
+    #         target_q,
+    #         edge2graph,
+    #         node2graph,
+    #         edge_index=edge_index,
+    #         pos=graph.pos,
+    #         log=True,
+    #     )
+    #     return {'loss': loss}
 
     def test_step(self, data, i):
         print("Passing test_step")
@@ -1043,7 +1043,7 @@ class BridgeDiffusion(pl.LightningModule):
                             stochastic=stochastic,
                             start_from_time=self.config.sampling.start_from_time,
                         )
-                    elif self.config.sampling.score_type == "fixed_point_exp":
+                    elif self.config.sampling.score_type == "fixed_exp":
                         batch_out = self.sample_batch_gradient_descent(
                             batch, 
                             stochastic=False,
@@ -1555,15 +1555,15 @@ class BridgeDiffusion(pl.LightningModule):
         pos_init = pos.clone()
 
         t = torch.zeros(batch.num_graphs, device=pos.device)
-        T = self.config.sampling.fixed_point_exp.total_time
+        T = self.config.sampling.fixed_exp.total_time
 
-        dt = torch.ones_like(t) * self.config.sampling.fixed_point_exp.dt
+        dt = torch.ones_like(t) * self.config.sampling.fixed_exp.dt
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
         dynamic_graph.pos_traj.append(pos.to("cpu"))  # add initial position
 
         ## Set score function
         score_function = self.predict_vector
-        if not self.config.sampling.fixed_point_exp.use_exp_map:
+        if not self.config.sampling.fixed_exp.use_exp_map:
             kwargs = {
                 "q_type": self.q_type,
                 "num_iter": self.config.manifold.ode_solver.iter,
@@ -1588,8 +1588,14 @@ class BridgeDiffusion(pl.LightningModule):
             solve = self.geodesic_solver.batch_geodesic_ode_solve
 
         print("[sample_batch_simple] start sampling")
+        p_bar = tqdm(total=T, desc="Sampling")
         while (t < T).any():
-            print(f"t={t[0]}", end=", ")
+            # print(f"t={t[0]}", end=", ")
+            # 소수점 4번째 자리에서 버림
+            dt_str = f"{dt[0]:.4f}"
+            t_str = f"{t[0]:.4f}"
+            p_bar.set_postfix(t=t_str, dt=dt_str)
+            p_bar.update(float(dt_str))
             dt = dt.clip(max=T - t)
             dx, dq = score_function(
                 dynamic_graph,
@@ -1598,7 +1604,7 @@ class BridgeDiffusion(pl.LightningModule):
                 batch=batch,
             )
             # update pos and t
-            if not self.config.sampling.fixed_point_exp.use_exp_map:
+            if not self.config.sampling.fixed_exp.use_exp_map:
                 # use RK4 to solve the ODE
                 init, last, iter, index_tensor, stats = solve(pos, dq, *args, **kwargs)
                 pos = last["x"]
@@ -1607,7 +1613,7 @@ class BridgeDiffusion(pl.LightningModule):
             t += dt
             pos = center_pos(pos, batch.batch)
 
-            if self.config.sampling.fixed_point_exp.save_vector_field:
+            if self.config.sampling.fixed_exp.save_vector_field:
                 dynamic_graph.update_graph(pos, score=dx, t=t)
             else:
                 dynamic_graph.update_graph(pos, append=True)
@@ -1635,6 +1641,8 @@ class BridgeDiffusion(pl.LightningModule):
     def sample_batch(self, batch, stochastic=True):
         # Geodesic ODE solve
         graph = self.graph.from_batch(batch)
+        if not self.config.sampling.graph_condition:
+            graph.reset_to_dummy()
         node2graph = batch.batch
 
         pos = batch.pos[:, -1, :]
