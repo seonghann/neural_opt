@@ -1450,7 +1450,7 @@ class BridgeDiffusion(pl.LightningModule):
 
         dt_base = torch.ones_like(t) / self.config.sampling.sde_steps
         dynamic_graph = self.dynamic_graph.from_graph(graph, pos, pos_init, t)
-        dynamic_graph.pos_traj.append(pos.to("cpu"))  # add initial position
+        dynamic_graph.pos_traj.append(pos_init.to("cpu"))  # add initial position
 
         ## Set score function
         if self.config.sampling.score_type == "ddbm_score":
