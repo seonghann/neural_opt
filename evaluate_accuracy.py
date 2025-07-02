@@ -445,6 +445,7 @@ class ResultsHandler:
         data_idx_list: List[int],
         df: pd.DataFrame,
         index_to_atomic: Dict,
+        append_xyz: bool = True,  # append pos_ref and pos_xT
     ):
         """Save molecular structures as XYZ files."""
         os.makedirs(save_dir, exist_ok=True)
@@ -453,11 +454,14 @@ class ResultsHandler:
         pos_list = predicted_data["pos_list"]
         atom_type_list = predicted_data["atom_type_list"]
         smarts_list = predicted_data["smarts_list"]
+        xT_list = predicted_data["xT_list"]
 
         # Create lookup dictionary for metrics
         metrics_lookup = df.set_index("data_idx").to_dict("index")
 
-        for i, (pos_ref, pos_gen) in enumerate(zip(pos_ref_list, pos_list)):
+        for i, (pos_ref, pos_gen, pos_xT) in enumerate(
+            zip(pos_ref_list, pos_list, xT_list)
+        ):
             idx = data_idx_list[i]
 
             if idx not in metrics_lookup:
@@ -478,6 +482,18 @@ class ResultsHandler:
 
             filename = os.path.join(save_dir, f"idx{idx}.xyz")
             atoms_gen.write(filename, comment=comment)
+
+            if append_xyz:
+                atoms_ref = Atoms(symbols=atom_symbols, positions=pos_ref)
+                comment = f'pos_ref idx={idx} smarts="{smarts}" '
+                atoms_ref.write(filename, comment=comment, append=True)
+                atoms_xT = Atoms(symbols=atom_symbols, positions=pos_xT)
+                comment = (
+                    f'pos_xT idx={idx} smarts="{smarts}" '
+                    f"rmsd={metrics['rmsd_xT']:.6f} dmae={metrics['dmae_xT']:.6f} "
+                    f"q_norm={metrics['q_norm_xT']:.6f}"
+                )
+                atoms_xT.write(filename, comment=comment, append=True)
             print(f"Saved {filename}")
 
 

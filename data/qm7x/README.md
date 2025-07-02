@@ -68,7 +68,7 @@ python evaluate_accuracy_morered.py \
   --config_yaml ../../configs/sampling.qm7x.rdsm.yaml \
   --prb_pt denoise.random.pt \
   --calculate_energy --gpu \
-  --save_csv denoise.random.csv
+  --save_csv denoise.random.with_energy.csv
 ```
 
 

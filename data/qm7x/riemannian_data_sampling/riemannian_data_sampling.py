@@ -253,6 +253,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataloader", type=str, choices=["train", "val", "test"], default="test"
     )
+    parser.add_argument("--max_ode_attempts", type=int, default=3)
     parser.add_argument("--graph", type=str, default="mol", choices=["mol", "rxn"])
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
 
@@ -390,25 +391,43 @@ if __name__ == "__main__":
         elif args.sampling_type == "riemannian":
             ## Perterb pos in Riemannian
             a_edge = a.index_select(0, edge2graph)
-            q_noise = torch.randn(size=(edge_index.size(1),), device=device)
-            q_noise *= (1.0 - a_edge).sqrt() / a_edge.sqrt()
-            pos_t, pos_target, q_target, graph, time_step, ban_index = (
-                ode_noise_sampling(
-                    config,
-                    geodesic_solver,
-                    pos_0,
-                    q_noise,
-                    edge_index,
-                    graph.atom_type,
-                    node2graph,
-                    edge2graph,
-                    num_nodes,
-                    data,
-                    graph,
-                    time_step,
-                    retry=args.retry,
-                )
-            )
+
+            for attempt in range(args.max_ode_attempts):
+                try:
+                    q_noise = torch.randn(size=(edge_index.size(1),), device=device)
+                    q_noise *= (1.0 - a_edge).sqrt() / a_edge.sqrt()
+                    pos_t, pos_target, q_target, graph, time_step, ban_index = (
+                        ode_noise_sampling(
+                            config,
+                            geodesic_solver,
+                            pos_0,
+                            q_noise,
+                            edge_index,
+                            graph.atom_type,
+                            node2graph,
+                            edge2graph,
+                            num_nodes,
+                            data,
+                            graph,
+                            time_step,
+                            retry=args.retry,
+                        )
+                    )
+
+                    if attempt > 0:
+                        print(f"[Success] geodesic solver succeeded after {attempt} attempts")
+                    break
+                except torch._C._LinAlgError as e:
+                    if attempt < args.max_ode_attempts - 1:
+                        print(f"ode_sampling failed (attempt {attempt + 1}/{args.max_ode_attempts}). "
+                            f"Retrying with new q_noise...")
+                        continue
+                    else:
+                        print(f"SVD convergence failed after {args.max_ode_attempts} attempts.")
+                        raise e
+                except Exception as e:
+                    print(f"Unexpected error during ode_sampling: {e}")
+                    raise e
 
             ## Masking failed cases
             ban_node_mask = torch.isin(node2graph, ban_index)

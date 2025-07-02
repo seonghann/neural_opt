@@ -1,41 +1,25 @@
 import shutil
 from pathlib import Path
 
-# 9개 원본 폴더 목록
+
+t1 = 150
+times = 30
+
+seed_list = list(range(1, times))
 source_dirs = [
-    # "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed1",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed1_train",
-    # "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed1_val",
-    # "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed2",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed2_train",
-    # "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed2_val",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42_val",
+    f"xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t{t1}_seed{seed}_train"
+    for seed in seed_list
 ]
-target_dir = Path("xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42_1_2")
-
-source_dirs = [
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed1_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed2_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed3_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed4_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed5_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed6_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed7_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed8_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed9_train",
-
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42_train",
-    "xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_seed42_val",
+source_dirs += [
+    f"xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t{t1}_seed42_train",
+    f"xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t{t1}_seed42_val",
+    f"xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t{t1}_seed42",  # test set
 ]
-target_dir = Path("xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t300_10times")
 
-
+target_dir = Path(f"xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t{t1}_{times}times")
 target_dir.mkdir(exist_ok=True, parents=True)
 
-# 복사 및 카운팅
+# Copying and counting
 total_copied = 0
 
 for src in source_dirs:
@@ -46,7 +30,7 @@ for src in source_dirs:
     total_copied += count
     print(f"[{src}] → {count} files copied.")
 
-# 최종 파일 수 확인 (실제로 target에 있는 .xyz 파일 수)
+# Check the final count of .xyz files in the target directory
 final_count = len(list(target_dir.glob("*.xyz")))
 print(f"\n✅ Total .xyz files in '{target_dir}': {final_count}")
 if final_count < total_copied:
