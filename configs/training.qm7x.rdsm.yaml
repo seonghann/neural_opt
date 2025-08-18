@@ -48,9 +48,8 @@ debug:
   save_dynamic_final_only: true
 
 general:
-  # name: training.qm7x.rdsm
-  name: rdsm.qm7x.pretrained.20250613
-  # use_wandb: False  # debugging
+  name: training.qm7x.rdsm
+  # name: rdsm.qm7x.pretrained.20250620.hidden_dim256.t1_1500
   use_wandb: True
   wandb: 'online'
   save_model: True
@@ -75,7 +74,8 @@ model:
   name: geodiff
 
   pred_type: edge  # edge or node
-  hidden_dim: 128
+  # hidden_dim: 128
+  hidden_dim: 256
   num_bond_type: 10
   # num_atom_type: 5
   num_atom_type: 7
@@ -93,13 +93,13 @@ model:
     cutoff: 10.0
     smooth_conv: False
     mlp_act: swish
-    hidden_dim: 128
+    # hidden_dim: 128
+    hidden_dim: 256
 
 diffusion:
   scheduler:
     t0: 0
-    # t1: 1500
-    t1: 2500
+    t1: 1500
     name: tsdiff
     beta_start: 1.e-7
     beta_end: 2.e-3

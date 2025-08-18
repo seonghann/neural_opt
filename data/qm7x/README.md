@@ -71,6 +71,14 @@ python evaluate_accuracy_morered.py \
   --save_csv denoise.random.with_energy.csv
 ```
 
+Visualize scatter plots.
+
+```bash
+python plot_scatter.py --x rmsd_xT - y delta_E_xT --file denoise.random.with_energy.csv --log --visualize
+python plot_scatter.py --x dmae_xT - y delta_E_xT --file denoise.random.with_energy.csv --log --visualize
+python plot_scatter.py --x q_norm_xT - y delta_E_xT --file denoise.random.with_energy.csv --log --visualize
+```
+
 
 ## 3. Convert PyTorch Data to XYZ Format
 Convert `.pt` files to `.xyz` format with SMARTS generation.

@@ -48,7 +48,7 @@ debug:
   save_dynamic_final_only: true
 
 general:
-  name: qm7x.edsm
+  name: training.qm7x.edsm
   # use_wandb: False
   use_wandb: True
   wandb: 'online'
@@ -74,12 +74,12 @@ model:
   name: geodiff
 
   pred_type: edge  # edge or node
-  hidden_dim: 128
+  # hidden_dim: 128
+  hidden_dim: 256
   num_bond_type: 10
   # num_atom_type: 5
   num_atom_type: 7
   num_atom_feat: 8
-
   append_atom_feat: true
 
   edge_encoder: mlp
@@ -93,7 +93,8 @@ model:
     cutoff: 10.0
     smooth_conv: False
     mlp_act: swish
-    hidden_dim: 128
+    # hidden_dim: 128
+    hidden_dim: 256
 
 diffusion:
   scheduler:

@@ -65,6 +65,10 @@ if __name__ == "__main__":
         "--end_idx", type=int, required=True,
         help="Ending index for naming output files (inclusive)"
     )
+    parser.add_argument(
+        "--morered_initial", action='store_true',
+        help="Use MoreRed results as initial structures instead of non-equilibrium ones"
+    )
     args = parser.parse_args()
 
     dataloader = torch.load(args.input_file)
@@ -99,16 +103,18 @@ if __name__ == "__main__":
             write(filename, atoms, format="xyz", append=False, comment=comment)
 
             # Write the noneq structure
-            atoms = Atoms(positions=sample['_positions_noneq'].numpy(),
-                          numbers=sample['_atomic_numbers_noneq'].numpy())
-            comment = (
-                f'non-equilibrium idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
-            )
-            # atoms = Atoms(positions=sample['_positions'].numpy(),  # Using MoreRed results as initial structures
-            #               numbers=sample['_atomic_numbers'].numpy())
-            # comment = (
-            #     f'MoreRed-results idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
-            # )
+            if args.morered_initial:
+                atoms = Atoms(positions=sample['_positions'].numpy(),  # Using MoreRed results as initial structures
+                            numbers=sample['_atomic_numbers'].numpy())
+                comment = (
+                    f'MoreRed-results idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
+                )
+            else:
+                atoms = Atoms(positions=sample['_positions_noneq'].numpy(),
+                            numbers=sample['_atomic_numbers_noneq'].numpy())
+                comment = (
+                    f'non-equilibrium idx={idx} GeodesicLength=0.0 smarts="{smarts}" _idx={_idx}'
+                )
             write(filename, atoms, format="xyz", append=True, comment=comment)
             print(f"Write {filename}")
 

@@ -181,6 +181,9 @@ class GeometryMetrics:
         atomic_numbers: Optional[torch.Tensor] = None,
         calculate_energy: bool = False,
         gpu: bool = True,
+        df_x0: Optional[pd.DataFrame] = None,
+        df_xT: Optional[pd.DataFrame] = None,
+        data_idx: int = None,
     ) -> EvaluationMetrics:
         """Calculate all metrics for a molecule."""
         # Convert atom types if needed
@@ -210,12 +213,24 @@ class GeometryMetrics:
         if calculate_energy:
             print(f"Debug: Start energy calculation for {len(atoms_xT)} atoms")
             # Calculate energies if requested
-            ePBE0_xT, eMBD_xT = EnergyCalculator._total_corrected_energy(
-                atoms_xT, to_gpu=gpu
-            )
-            ePBE0_ref, eMBD_ref = EnergyCalculator._total_corrected_energy(
-                atoms_ref, to_gpu=gpu
-            )
+            if df_x0 is not None:
+                ePBE0_ref, eMBD_ref = df_x0[df_x0['data_idx'] == data_idx][["ePBE0_x0", "eMBD_x0"]].values[0]
+            else:
+                ePBE0_ref, eMBD_ref = EnergyCalculator._total_corrected_energy(
+                    atoms_ref, to_gpu=gpu
+                )
+            if df_xT is not None:
+                ePBE0_xT, eMBD_xT = df_xT[df_xT['data_idx'] == data_idx][["ePBE0_xT", "eMBD_xT"]].values[0]
+            else:
+                ePBE0_xT, eMBD_xT = EnergyCalculator._total_corrected_energy(
+                    atoms_xT, to_gpu=gpu
+                )
+            # ePBE0_xT, eMBD_xT = EnergyCalculator._total_corrected_energy(
+            #     atoms_xT, to_gpu=gpu
+            # )
+            # ePBE0_ref, eMBD_ref = EnergyCalculator._total_corrected_energy(
+            #     atoms_ref, to_gpu=gpu
+            # )
             ePBE0_gen, eMBD_gen = EnergyCalculator._total_corrected_energy(
                 atoms_gen, to_gpu=gpu
             )
@@ -565,6 +580,8 @@ class MolecularEvaluator:
         ban_index: List[int] = None,
         calculate_energy: bool = False,
         gpu: bool = True,
+        read_energy_x0: bool = False,
+        read_energy_xT: bool = False,
     ) -> pd.DataFrame:
         """Evaluate all molecules and return DataFrame with results."""
         if ban_index is None:
@@ -577,6 +594,9 @@ class MolecularEvaluator:
         xT_list = predicted_data["xT_list"]
         atom_type_list = predicted_data["atom_type_list"]
         smarts_list = predicted_data["smarts_list"]
+
+        df_x0 = pd.read_csv(read_energy_x0) if read_energy_x0 is not None else None
+        df_xT = pd.read_csv(read_energy_xT) if read_energy_xT is not None else None
 
         for i, (pos_ref, pos_gen, xT) in enumerate(
             zip(pos_ref_list, pos_list, xT_list)
@@ -611,6 +631,9 @@ class MolecularEvaluator:
                 atom_type_tensor,
                 calculate_energy=calculate_energy,
                 gpu=gpu,
+                df_x0=df_x0,
+                df_xT=df_xT,
+                data_idx=data_idx,
             )
 
             # Store results
@@ -680,7 +703,17 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--calculate_energy",
         action="store_true",
-        help="Calculate energy differences (requires pyscf and pymbd)",
+        help="Calculate energy differences for the QM7-X benchmark (requires pyscf and pymbd)",
+    )
+    parser.add_argument(
+        "--read_energy_x0",
+        type=str,
+        help="Path to read energy data from a csv file",
+    )
+    parser.add_argument(
+        "--read_energy_xT",
+        type=str,
+        help="Path to read energy data from a csv file",
     )
     parser.add_argument(
         "--gpu",
@@ -714,6 +747,8 @@ def main():
         ban_index,
         calculate_energy=args.calculate_energy,
         gpu=args.gpu,
+        read_energy_x0=args.read_energy_x0,
+        read_energy_xT=args.read_energy_xT,
     )
 
     # Configure display and show results

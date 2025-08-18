@@ -57,6 +57,16 @@ if __name__ == "__main__":
         help="coefficient gamma for the Morse scaler",
         default=0.0,
     )
+    parser.add_argument(
+        "--calculate_energy",
+        action="store_true",
+        help="Calculate energy differences for the QM7-X benchmark (requires pyscf and pymbd)",
+    )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Use GPU for energy calculations (requires PySCF to support GPU)",
+    )
     args = parser.parse_args()
     print(args)
     ##########################################################3
@@ -97,18 +107,23 @@ if __name__ == "__main__":
         "time_step_x": [],
         "time_step_q": [],
         "idx": [],
-        #
+        # Euclidean noise distribution
         "rmsd": [],
         "dmae": [],
         "q_norm": [],
-        #
+        # Riemannian noise distribution
         "_rmsd": [],
         "_dmae": [],
         "_q_norm": [],
-        #
+        # Non-eq structures
         "__rmsd": [],
         "__dmae": [],
         "__q_norm": [],
+
+        # Energies
+        "delta_E_xt": [],
+        "delta_E_xt2": [],
+        "delta_E_xT": [],
     }
 
     for i, filename in enumerate(filenames):
@@ -163,13 +178,41 @@ if __name__ == "__main__":
         results["_dmae"].append(dmae)
         results["_q_norm"].append(q_norm)
 
-        # 3) distribution of MMFF structures
+        # 3) distribution of non-equilibrium structures
         rmsd = GeometryMetrics.calc_rmsd_aligned(atoms_0, atoms_T)
         dmae = GeometryMetrics.calc_dmae(pos_0, pos_T).item()
         q_norm = metrics_calculator.calc_q_norm(pos_0, pos_T, _atom_type).item()
         results["__rmsd"].append(rmsd)
         results["__dmae"].append(dmae)
         results["__q_norm"].append(q_norm)
+
+        ## TEST:
+        if args.calculate_energy:
+            import sys
+            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+            from evaluate_accuracy import EnergyCalculator
+
+            print(f"Debug: Start energy calculation for {len(atoms_t)} atoms")
+            ePBE0_t, eMBD_t = EnergyCalculator._total_corrected_energy(
+                atoms_t, to_gpu=args.gpu
+            )
+            ePBE0_t2, eMBD_t2 = EnergyCalculator._total_corrected_energy(
+                atoms_t2, to_gpu=args.gpu
+            )
+            ePBE0_T, eMBD_T = EnergyCalculator._total_corrected_energy(
+                atoms_T, to_gpu=args.gpu
+            )
+            ePBE0_0, eMBD_0 = EnergyCalculator._total_corrected_energy(
+                atoms_0, to_gpu=args.gpu
+            )
+            delta_E_xt = abs(ePBE0_t + eMBD_t- ePBE0_0 - eMBD_0) * 627.509  # eV to kcal/mol
+            delta_E_xt2 = abs(ePBE0_t2 + eMBD_t2 - ePBE0_0 - eMBD_0) * 627.509  # eV to kcal/mol
+            delta_E_xT = abs(ePBE0_T + eMBD_T - ePBE0_0 - eMBD_0) * 627.509  # eV to kcal/mol
+        else:
+            delta_E_xt, delta_E_xt2, delta_E_xT = None, None, None
+        results["delta_E_xt"].append(delta_E_xt)
+        results["delta_E_xt2"].append(delta_E_xt2)
+        results["delta_E_xT"].append(delta_E_xT)
 
     df = pd.DataFrame(results)
     df = df.sort_values(by="time_step_q")
@@ -183,10 +226,14 @@ if __name__ == "__main__":
     print("RMSD", df["rmsd"].mean(), df["_rmsd"].mean(), df["__rmsd"].mean())
     print("DMAE", df["dmae"].mean(), df["_dmae"].mean(), df["__dmae"].mean())
     print("q_norm", df["q_norm"].mean(), df["_q_norm"].mean(), df["__q_norm"].mean())
+    print("dE", df["delta_E_xt"].mean(), df["delta_E_xt2"].mean(), df["delta_E_xT"].mean())
 
     print("Median error: Cartesian sampling, Riemannian sampling, MMFF")
     print("RMSD", df["rmsd"].median(), df["_rmsd"].median(), df["__rmsd"].median())
     print("DMAE", df["dmae"].median(), df["_dmae"].median(), df["__dmae"].median())
     print(
         "q_norm", df["q_norm"].median(), df["_q_norm"].median(), df["__q_norm"].median()
+    )
+    print(
+        "dE", df["delta_E_xt"].median(), df["delta_E_xt2"].median(), df["delta_E_xT"].median()
     )
