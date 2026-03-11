@@ -7,13 +7,14 @@ import random
 
 from ase import io
 from torch_geometric.data import Data, InMemoryDataset
-from torch_geometric.data.lightning import LightningDataset
+from torch_geometric.loader import DataLoader
 import torch
 
 from dataset.process_smarts import process_smarts, process_smarts_single
 
 
 def load_datamodule(config):
+    """Load data module and return an object with train/val/test dataloaders."""
     if config.dataset.type == "reaction":
         datamodule = GrambowDataModule(config)
     elif config.dataset.type == "molecule":
@@ -23,38 +24,51 @@ def load_datamodule(config):
     return datamodule
 
 
-class AbstractDataModule(LightningDataset):
+class AbstractDataModule:
+    """Plain data module that wraps PyG DataLoaders (no PL dependency)."""
+
     def __init__(self, config, datasets):
-        super().__init__(
-            train_dataset=datasets["train"],
-            val_dataset=datasets["val"],
-            test_dataset=datasets["test"],
-            batch_size=config.train.batch_size,  # if 'debug' not in config.general.name else 2,
-            num_workers=config.train.num_workers,
-            pin_memory=getattr(config.dataset, 'pin_memory', False),
-        )
         self.config = config
+        self._train_dataset = datasets["train"]
+        self._val_dataset = datasets["val"]
+        self._test_dataset = datasets["test"]
+
+        self._batch_size = config.train.batch_size
+        self._num_workers = config.train.num_workers
+        self._pin_memory = getattr(config.dataset, 'pin_memory', False)
+
         self.input_dims = None
         self.output_dims = None
 
-        self.stage = None
-        self.file_idx = None
-        return
-
     def __getitem__(self, idx):
-        return self.train_dataset[idx]
+        return self._train_dataset[idx]
 
-    def node_coutns(self, max_nodes_possible=300):
-        all_counts = torch.zeros(max_nodes_possible)
-        for loader in [self.train_datalader(), self.val_dataloader()]:
-            for data in loader:
-                uniuqe, counts = torch.unique(data.batch, return_counts=True)
-                for count in counts:
-                    all_counts[count] += 1
-        max_index = max(all_counts.nonzero())
-        all_counts = all_counts[:max_index + 1]
-        all_counts = all_counts / all_counts.sum()
-        return all_counts
+    def train_dataloader(self):
+        return DataLoader(
+            self._train_dataset,
+            batch_size=self._batch_size,
+            shuffle=True,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self._val_dataset,
+            batch_size=self._batch_size,
+            shuffle=False,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self._test_dataset,
+            batch_size=self._batch_size,
+            shuffle=False,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+        )
 
 
 class GrambowDataset(InMemoryDataset):

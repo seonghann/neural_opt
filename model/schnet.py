@@ -7,8 +7,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from math import pi as PI
 
-# from utils.chem import BOND_TYPES
-from ..common import MeanReadout, SumReadout, MultiLayerPerceptron
+from model.layers import MeanReadout, SumReadout, MultiLayerPerceptron
 
 
 class GaussianSmearing(torch.nn.Module):
@@ -96,7 +95,6 @@ class CFConv(MessagePassing):
         else:
             C = (edge_length <= self.cutoff).float()
         W = self.nn(edge_attr) * C.view(-1, 1)
-        #W = self.nn(edge_attr)
 
         x = self.lin1(x)
         x = self.propagate(edge_index, x=x, W=W)
@@ -158,8 +156,8 @@ class SchNetEncoder(Module):
                     torch.nn.ReLU(),
                     torch.nn.Linear(hidden_channels, hidden_channels))
             self.edge_d_emb = MultiLayerPerceptron(
-                    1, 
-                    [hidden_channels, hidden_channels], 
+                    1,
+                    [hidden_channels, hidden_channels],
                     activation=edge_activation
                     )
 
@@ -169,23 +167,14 @@ class SchNetEncoder(Module):
                 hidden_channels, edge_channels, num_filters, cutoff, smooth
             )
             self.interactions.append(block)
-    
+
     @classmethod
     def from_config(cls, config):
         if config.edge_emb:
-            from edge import MLPEdgeEncoder
+            from model.edge import MLPEdgeEncoder
             edge_emb = MLPEdgeEncoder(config.hidden_dim, config.mlp_act)
         else:
             edge_emb = None
-
-        #print(f"hidden_channels:{config.hidden_dim}")
-        #print(f"num_filters:{config.hidden_dim}")
-        #print(f"num_interactions:{config.num_convs}")
-        #print(f"cutoff:{config.cutoff}")
-        #print(f"smooth:{config.smooth_conv}")
-        #print(f"embedding:{False}")
-        #print(f"edge_emb:{edge_emb}")
-        #print(f"edge_activation:{config.mlp_act}")
 
         encoder = cls(
                 hidden_channels=config.hidden_dim,
@@ -212,8 +201,8 @@ class SchNetEncoder(Module):
         if edge_attr is None:
             if hasattr(kwargs, "edge_type"):
                 edge_type_r, edge_type_p = kwargs["edge_type"]
-                edge_emb_r = self.edge_emb(edge_type_r) 
-                edge_emb_p = self.edge_emb(edge_type_p) 
+                edge_emb_r = self.edge_emb(edge_type_r)
+                edge_emb_p = self.edge_emb(edge_type_p)
                 edge_d_emb = self.edge_d_emb(edge_length)
                 edge_attr = self.edge_cat(
                         torch.cat(

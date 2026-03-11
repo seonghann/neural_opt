@@ -5,7 +5,7 @@ Riemannian data sampling for fine-tuning
 from tqdm import tqdm
 import numpy as np
 import torch
-from utils.rxn_graph import MolGraph, RxnGraph
+from manifold.graph import MolGraph, RxnGraph
 from torch_geometric.data import Batch
 import pandas as pd
 from utils.chem import ATOMIC_NUMBERS
@@ -270,7 +270,7 @@ if __name__ == "__main__":
 
     from dataset.data_module import load_datamodule
     from omegaconf import OmegaConf
-    from utils.geodesic_solver import GeodesicSolver
+    from manifold.solver import GeodesicSolver
     from diffusion.noise_scheduler import load_noise_scheduler
 
     if not os.path.exists(args.save_xyz):

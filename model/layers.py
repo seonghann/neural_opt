@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-from model.utils import load_activation
+from torch_scatter import scatter_mean, scatter_add
+
+from model.utils import activation_loader
 
 
 class MultiLayerPerceptron(nn.Module):
@@ -19,8 +21,7 @@ class MultiLayerPerceptron(nn.Module):
 
         self.dims = [input_dim] + hidden_dims
         if isinstance(activation, str):
-            # self.activation = getattr(F, activation)
-            self.activation = load_activation(activation)
+            self.activation = activation_loader(activation)
         elif isinstance(activation, nn.Module):
             self.activation = activation
         else:
@@ -60,6 +61,38 @@ class GaussianSmearing(nn.Module):
     def forward(self, dist):
         dist = dist.view(-1, 1) - self.offset.view(1, -1)
         return torch.exp(self.coeff * torch.pow(dist, 2))
+
+
+class MeanReadout(nn.Module):
+    """Mean readout operator over graphs with variadic sizes."""
+
+    def forward(self, data, input):
+        """
+        Perform readout over the graph(s).
+        Parameters:
+            data (torch_geometric.data.Data): batched graph
+            input (Tensor): node representations
+        Returns:
+            Tensor: graph representations
+        """
+        output = scatter_mean(input, data.batch, dim=0, dim_size=data.num_graphs)
+        return output
+
+
+class SumReadout(nn.Module):
+    """Sum readout operator over graphs with variadic sizes."""
+
+    def forward(self, data, input):
+        """
+        Perform readout over the graph(s).
+        Parameters:
+            data (torch_geometric.data.Data): batched graph
+            input (Tensor): node representations
+        Returns:
+            Tensor: graph representations
+        """
+        output = scatter_add(input, data.batch, dim=0, dim_size=data.num_graphs)
+        return output
 
 
 def assemble_atom_pair_feature(node_attr, edge_index, edge_attr):

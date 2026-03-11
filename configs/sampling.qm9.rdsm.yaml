@@ -38,8 +38,8 @@ dataset:
   type: molecule
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
-  raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
-  data_split: /home/share/DATA/QM9M/data_split.pkl
+  raw_datadir: ./data/qm9m/MMFFtoDFT_input
+  data_split: ./data/qm9m/data_split.pkl
   dtype: float32  # deprecated
 
 debug:
@@ -70,6 +70,7 @@ sampling:
   gode_ref_dt: 0.05
   gode_max_dt: 0.1
   time_margin: 0.0
+  num_cycles: 1
 
 model:
   name: geodiff

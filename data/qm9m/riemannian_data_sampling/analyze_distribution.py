@@ -66,7 +66,7 @@ if __name__ == "__main__":
     import pandas as pd
     from diffusion.noise_scheduler import load_noise_scheduler
     from omegaconf import OmegaConf
-    from utils.geodesic_solver import GeodesicSolver
+    from manifold.solver import GeodesicSolver
 
     config = OmegaConf.load(args.config_yaml)
     config.manifold.ode_solver.alpha = args.alpha

@@ -2,11 +2,22 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from utils.rxn_graph import DynamicMolGraph
+from manifold.graph import DynamicMolGraph
 from model.layers import MultiLayerPerceptron, assemble_atom_pair_feature
-from model.utils import get_distance
-from model_tsdiff.edge import get_edge_encoder
-from model_tsdiff import load_encoder, activation_loader
+from model.utils import get_distance, activation_loader
+from model.edge import get_edge_encoder
+from model.schnet import SchNetEncoder
+
+
+EncoderDict = {
+    "schnet": SchNetEncoder,
+}
+
+
+def load_encoder(config, encoder_type="global_encoder"):
+    cfg = config.get(encoder_type)
+    encoder = EncoderDict[cfg.name].from_config(cfg)
+    return encoder
 
 
 class GeoDiffEncoder(nn.Module):

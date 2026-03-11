@@ -19,7 +19,7 @@ from ase.build.rotate import minimize_rotation_and_translation
 
 from utils.chem import ATOMIC_NUMBERS
 from dataset.data_module import load_datamodule
-from utils.geodesic_solver import GeodesicSolver
+from manifold.solver import GeodesicSolver
 
 
 @dataclass
