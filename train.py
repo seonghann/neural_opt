@@ -110,13 +110,13 @@ def main():
     lambda_x_valid = config.train.lambda_x_valid
     lambda_q_valid = config.train.lambda_q_valid
 
-    train_loss_fn = LossFunction(lambda_x_train, lambda_q_train, "train")
-    valid_loss_fn = LossFunction(lambda_x_valid, lambda_q_valid, "valid")
-    train_metrics = TrainMetrics(name='train')
+    train_loss_fn = LossFunction(lambda_x_train, lambda_q_train, "train").to(accelerator.device)
+    valid_loss_fn = LossFunction(lambda_x_valid, lambda_q_valid, "valid").to(accelerator.device)
+    train_metrics = TrainMetrics(name='train').to(accelerator.device)
     valid_metrics = ValidMetrics(
         accelerator.unwrap_model(model).geodesic_solver,
         'valid', lambda_x_valid, lambda_q_valid,
-    )
+    ).to(accelerator.device)
     valid_sampling_metrics = SamplingMetrics(
         accelerator.unwrap_model(model).geodesic_solver, name='valid'
     )

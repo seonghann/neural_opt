@@ -39,7 +39,7 @@ dataset:
   name: MMFFtoDFT
   datadir: data_qm9m_alpha1.7_beta0.01_3times
   raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42_1_2
-  data_split: /home/share/DATA/QM9M/data_split.pkl
+  data_split: ./data/qm9m/data_split.pkl
   dtype: float32  # deprecated
 
 debug:

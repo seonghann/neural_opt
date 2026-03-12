@@ -1,3 +1,5 @@
+# DEPRECATED: One-time data prep script. data_split.pkl already exists.
+# Not required for paper reproduction. Scheduled for removal.
 """
 Save data_split.pkl
 

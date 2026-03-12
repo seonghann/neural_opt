@@ -1,3 +1,5 @@
+# DEPRECATED: Analysis utility for comparing noise distributions.
+# Not required for paper reproduction. Scheduled for removal.
 """
 Calculate RMSD, DMAE, q_norm(geodesic length) and save it as csv file.
 """

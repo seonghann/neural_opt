@@ -170,9 +170,7 @@ def ode_noise_sampling(
         )
 
         data = Batch.from_data_list(data[~ban_batch_mask])
-        # graph = self.graph.from_batch(data)
-        # graph = MolGraph.from_batch(data)
-        graph = Graph.from_batch(data)
+        graph = MolGraph.from_batch(data)
 
         pos_noise = pos_noise[~ban_node_mask]
         # x_dot = x_dot[~ban_node_mask]
@@ -255,6 +253,14 @@ if __name__ == "__main__":
     )
     parser.add_argument("--graph", type=str, default="mol", choices=["mol", "rxn"])
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument(
+        "--batch_start", type=int, default=None,
+        help="Start batch index (inclusive). For parallel runs.",
+    )
+    parser.add_argument(
+        "--batch_end", type=int, default=None,
+        help="End batch index (exclusive). For parallel runs.",
+    )
 
     args = parser.parse_args()
     print(args)
@@ -273,12 +279,9 @@ if __name__ == "__main__":
     from manifold.solver import GeodesicSolver
     from diffusion.noise_scheduler import load_noise_scheduler
 
-    if not os.path.exists(args.save_xyz):
-        os.makedirs(args.save_xyz)
-        print(f"Create the directory: {args.save_xyz}")
-    else:
-        print(f"The directory {args.save_xyz} already exists")
-        exit(1)
+    if args.save_xyz:
+        os.makedirs(args.save_xyz, exist_ok=True)
+        print(f"Output directory: {args.save_xyz}")
 
     torch.manual_seed(args.seed)
 
@@ -314,7 +317,14 @@ if __name__ == "__main__":
         ValueError()
     print(f"Load {args.dataloader} dataloader")
 
+    batch_start = args.batch_start if args.batch_start is not None else 0
+    batch_end = args.batch_end if args.batch_end is not None else len(dataloader)
+    total_batches = batch_end - batch_start
+    print(f"Processing batches [{batch_start}, {batch_end}) out of {len(dataloader)}")
+
     for i_batch, data in tqdm(enumerate(dataloader), total=len(dataloader)):
+        if i_batch < batch_start or i_batch >= batch_end:
+            continue
         print(f"i_batch={i_batch}", flush=True)
 
         data = data.to(device)
@@ -380,9 +390,9 @@ if __name__ == "__main__":
             norm_ref = norm(q_target)
             perr_straight = norm(q_target - q_straight) / norm_ref * 100
             perr_projected = torch.zeros_like(perr_straight)
-            results["perr_straight"].extend(perr_straight.tolist())
-            results["perr_projected"].extend(perr_projected.tolist())
-            results["time_step"].extend(time_step.tolist())
+            results["perr_straight"].extend(perr_straight.cpu().tolist())
+            results["perr_projected"].extend(perr_projected.cpu().tolist())
+            results["time_step"].extend(time_step.cpu().tolist())
             data_idx = data.idx
             results["idx"].extend(data_idx)
             smarts = data.smarts
@@ -412,20 +422,21 @@ if __name__ == "__main__":
 
             ## Masking failed cases
             ban_node_mask = torch.isin(node2graph, ban_index)
-            ban_batch_mask = torch.isin(torch.arange(len(data)), ban_index)
+            ban_batch_mask = torch.isin(torch.arange(len(data), device=ban_index.device), ban_index)
             edge_index = graph.full_edge(upper_triangle=True)[0]
             node2graph = graph.batch
             edge2graph = node2graph.index_select(0, edge_index[0])
-            tmp = np.array(data.x.split(natoms), dtype=object)
+            ban_batch_mask_cpu = ban_batch_mask.cpu()
+            tmp = np.array(data.x.cpu().split(natoms), dtype=object)
             if len(data) == 1:
-                _atom_type = data.x.split(natoms)
+                _atom_type = data.x.cpu().split(natoms)
             else:
-                _atom_type = np.array(data.x.split(natoms), dtype=object)[~ban_batch_mask]
-            data_idx = torch.tensor(data.idx)[~ban_batch_mask].tolist()
+                _atom_type = np.array(data.x.cpu().split(natoms), dtype=object)[~ban_batch_mask_cpu]
+            data_idx = torch.tensor(data.idx)[~ban_batch_mask_cpu].tolist()
             natoms = node2graph.bincount().tolist()
             nedges = edge2graph.bincount().tolist()
             pos_0 = pos_0[~ban_node_mask]
-            smarts = np.array(data.smarts)[~ban_batch_mask.numpy()]
+            smarts = np.array(data.smarts)[~ban_batch_mask_cpu.numpy()]
 
             q_target = geodesic_solver.batch_projection(
                 q_target,
@@ -463,9 +474,9 @@ if __name__ == "__main__":
             perr_straight = norm(q_target - q_straight) / norm_ref * 100
             perr_projected = norm(q_target - q_projected) / norm_ref * 100
 
-            results["perr_straight"].extend(perr_straight.tolist())
-            results["perr_projected"].extend(perr_projected.tolist())
-            results["time_step"].extend(time_step.tolist())
+            results["perr_straight"].extend(perr_straight.cpu().tolist())
+            results["perr_projected"].extend(perr_projected.cpu().tolist())
+            results["time_step"].extend(time_step.cpu().tolist())
             results["idx"].extend(data_idx)
             results["smarts"].extend(smarts)
         else:
@@ -494,16 +505,16 @@ if __name__ == "__main__":
 
             for i in range(len(pos_0)):
                 filename = (
-                    f"./{args.save_xyz}/idx{data_idx[i]}-{time_step[i].item()}.xyz"
+                    f"{args.save_xyz}/idx{data_idx[i]}-{time_step[i].item()}.xyz"
                 )
 
                 atom_type = _remap_to_atomic_symbols(_atom_type[i])
 
-                atoms_pos_0 = Atoms(symbols=atom_type, positions=pos_0[i])
-                atoms_pos_t = Atoms(symbols=atom_type, positions=pos_t[i])
-                atoms_pos_target = Atoms(symbols=atom_type, positions=pos_target[i])
+                atoms_pos_0 = Atoms(symbols=atom_type, positions=pos_0[i].cpu())
+                atoms_pos_t = Atoms(symbols=atom_type, positions=pos_t[i].cpu())
+                atoms_pos_target = Atoms(symbols=atom_type, positions=pos_target[i].cpu())
 
-                comment = f'pos_0 idx={data_idx[i]} time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].tolist()}'
+                comment = f'pos_0 idx={data_idx[i]} time_step={time_step[i].item()} smarts="{smarts[i]}" q_target={q_target[i].cpu().tolist()}'
                 atoms_pos_0.write(filename, comment=comment, append=False)
                 comment = "pos_t"
                 atoms_pos_t.write(filename, comment=comment, append=True)
@@ -515,5 +526,10 @@ if __name__ == "__main__":
     if args.save_csv is not None:
         # Save perr info as csv file
         df = pd.DataFrame(results)
-        df.to_csv(args.save_csv)
-        print(f"Save {args.save_csv}")
+        if args.batch_start is not None or args.batch_end is not None:
+            base, ext = os.path.splitext(args.save_csv)
+            csv_path = f"{base}_b{batch_start}-{batch_end}{ext}"
+        else:
+            csv_path = args.save_csv
+        df.to_csv(csv_path)
+        print(f"Save {csv_path}")

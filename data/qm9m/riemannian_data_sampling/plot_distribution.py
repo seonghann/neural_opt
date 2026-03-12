@@ -1,3 +1,5 @@
+# DEPRECATED: Visualization utility for noise distribution plots.
+# Not required for paper reproduction. Scheduled for removal.
 import argparse
 
 parser = argparse.ArgumentParser()

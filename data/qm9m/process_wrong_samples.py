@@ -1,3 +1,5 @@
+# DEPRECATED: One-time data prep script. wrong_samples.pkl already exists.
+# Not required for paper reproduction. Scheduled for removal.
 """
 Processing incorrect data from QM9M.
 For the test set, identify and save the indices of samples with the following two issues into a file (./wrong_samples.pkl):

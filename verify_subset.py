@@ -1,3 +1,5 @@
+# DEPRECATED: Use `python sample.py <config> --batch_idx_end 4` directly instead.
+# Scheduled for removal after paper reproduction is confirmed.
 """Quick subset sampling verification.
 Runs sampling on ~5% of test data (4 batches) to verify code works after refactoring.
 

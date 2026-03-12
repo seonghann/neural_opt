@@ -48,8 +48,8 @@ dataset:
 
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
-  raw_datadir: ../MMFFtoDFT_input
-  data_split: ../data_split.pkl
+  raw_datadir: ./data/qm9m/MMFFtoDFT_input
+  data_split: ./data/qm9m/data_split.pkl
   dtype: float32  # deprecated
 
 debug:

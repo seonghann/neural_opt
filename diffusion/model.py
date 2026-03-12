@@ -171,7 +171,7 @@ class DiffusionModel(nn.Module):
             )
             if rescale_dq:
                 norm_q_new = scatter_sum(score_q.square(), edge2graph).sqrt()
-                print(f"Debug: norm_q / norm_q_new (> 1.)={norm_q / norm_q_new}")
+                # print(f"Debug: norm_q / norm_q_new (> 1.)={norm_q / norm_q_new}")
                 rescale = (norm_q / norm_q_new).index_select(0, edge2graph)
                 score_q *= rescale
 
@@ -234,7 +234,6 @@ class DiffusionModel(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported noise_type: {self.config.train.noise_type}")
         noisy_graph = self.dynamic_graph_cls.from_graph(graph, pos, pos_init, tt)
-        print(f"Debug: tt={tt}")
         return noisy_graph, target_x, target_q
 
     # -----------------------------------------------------------------
@@ -281,7 +280,7 @@ class DiffusionModel(nn.Module):
         t0 = self.config.diffusion.scheduler.t0
         t1 = self.config.diffusion.scheduler.t1
         time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
-        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        # print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
         time_step = time_step.sort()[0]
         a = self.noise_schedule.get_alpha(time_step, device=device)
 

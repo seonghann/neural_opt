@@ -1,3 +1,5 @@
+# DEPRECATED: One-time data preprocessing script. Processed data already exists.
+# Not required for paper reproduction. Scheduled for removal.
 import os
 from rdkit import Chem
 from ase import Atoms

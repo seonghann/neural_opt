@@ -13,14 +13,14 @@ def get_optimizer(cfg, model):
             ),
         )
     elif cfg.type == "adamw":
-        self.optim = torch.optim.AdamW(
+        return torch.optim.AdamW(
             model.parameters(),
             lr=cfg.lr,
             amsgrad=True,
             weight_decay=cfg.weight_decay,
         )
     else:
-        raise NotImplementedError(f"Optimizer not supported: {optim_type}")
+        raise NotImplementedError(f"Optimizer not supported: {cfg.type}")
 
 
 def get_scheduler(cfg, optimizer):

@@ -38,8 +38,8 @@ dataset:
   type: molecule
   name: MMFFtoDFT
   datadir: data_qm9m_MMFFtoDFT
-  raw_datadir: /home/share/DATA/QM9M/MMFFtoDFT_input
-  data_split: /home/share/DATA/QM9M/data_split.pkl
+  raw_datadir: ./data/qm9m/MMFFtoDFT_input
+  data_split: ./data/qm9m/data_split.pkl
   dtype: float32  # deprecated
 
 debug:

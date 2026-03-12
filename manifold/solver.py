@@ -5,28 +5,6 @@ from torch.nn.utils.rnn import pad_sequence
 from torch import vmap
 
 
-from time import time
-
-
-# NOTE: For debugging, will be deprecated
-def timer(func):
-    """Check time.
-
-    Usage)
-    >>> @timer
-    >>> def method1(...):
-    >>>     ...
-    >>>     return
-    """
-
-    def wrapper(*args, **kwargs):
-        start = time()
-        result = func(*args, **kwargs)
-        end = time()
-        print(f"Elapsed time[{func.__name__}]: {end - start} sec", flush=True)
-        return result
-
-    return wrapper
 
 
 def get_pad_mask(num_nodes):
@@ -429,7 +407,6 @@ class GeodesicSolver(object):
         _atom_type = _atom_type.contiguous()
         _edge_index = torch.stack([_i, _j]).contiguous()  # (2, E)
 
-        torch.cuda.empty_cache()
         d_ij = self.compute_d(_edge_index, _pos)  # (E, )
         d_e_ij = self.compute_de(_edge_index, _atom_type)  # (E, )
         d_pos = (_pos[_i] - _pos[_j])  # (E, 3)
@@ -1043,7 +1020,15 @@ class GeodesicSolver(object):
 
 
 def batch_pinv1(J, rtol=1e-4, atol=None):
-    return vmap(torch.linalg.pinv)(J.to_dense(), rtol=rtol, atol=atol)
+    J_dense = J.to_dense() if J.is_sparse else J
+    original_device = J_dense.device
+    if original_device.type == 'cuda':
+        _prev_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+        result = torch.linalg.pinv(J_dense.cpu(), rtol=rtol, atol=atol).to(original_device)
+        torch.set_num_threads(_prev_threads)
+        return result
+    return torch.linalg.pinv(J_dense, rtol=rtol, atol=atol)
 
 
 def batch_pinv2(J, rtol=1e-4, atol=None):
@@ -1053,7 +1038,15 @@ def batch_pinv2(J, rtol=1e-4, atol=None):
 
 
 def batch_svd1(J):
-    return vmap(torch.linalg.svd)(J.to_dense())
+    J_dense = J.to_dense() if J.is_sparse else J
+    original_device = J_dense.device
+    if original_device.type == 'cuda':
+        _prev_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+        U, S, Vh = torch.linalg.svd(J_dense.cpu(), full_matrices=True)
+        torch.set_num_threads(_prev_threads)
+        return U.to(original_device), S.to(original_device), Vh.to(original_device)
+    return torch.linalg.svd(J_dense, full_matrices=True)
 
 
 def batch_svd2(J):
