@@ -1,2 +1,12 @@
 __pycache__/
 NeuralOpt.egg-info/
+
+# Data & checkpoints (tracked separately)
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.pkl
+data/*/processed/
+reproducible/checkpoints/
+debug/

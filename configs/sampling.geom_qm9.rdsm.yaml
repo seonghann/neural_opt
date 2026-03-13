@@ -117,8 +117,8 @@ general:
   # gpus: 0  # for checking CPU time
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
-  # test_only: ./checkpoints/rdsm.geom_qm9.pretrained.ckpt
-  test_only: ./checkpoints/rdsm.geom_qm9.finetuned.ckpt
+  # test_only: ./reproducible/checkpoints/rdsm.geom_qm9.pretrained.ckpt
+  test_only: ./reproducible/checkpoints/rdsm.geom_qm9.finetuned.ckpt
   evaluate_all_checkpoints:
 
 sampling:

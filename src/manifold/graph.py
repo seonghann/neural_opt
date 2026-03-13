@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, coalesce, unbatch
 from torch_geometric.nn import radius_graph
-from utils.chem import BOND_TYPES_ENCODER
+from src.utils.chem import BOND_TYPES_ENCODER
 
 
 def binarize(x):
@@ -548,7 +548,7 @@ class DynamicRxnGraph(RxnGraph):
 if __name__ == "__main__":
     import sys
     from omegaconf import OmegaConf
-    from dataset.data_module import GrambowDataModule, QM9DataModule
+    from src.dataset.data_module import GrambowDataModule, QM9DataModule
 
     config = OmegaConf.create(
         {

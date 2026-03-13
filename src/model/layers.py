@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch_scatter import scatter_mean, scatter_add
 
-from model.utils import activation_loader
+from src.model.utils import activation_loader
 
 
 class MultiLayerPerceptron(nn.Module):

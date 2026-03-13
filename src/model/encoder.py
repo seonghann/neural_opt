@@ -2,11 +2,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from manifold.graph import DynamicMolGraph
-from model.layers import MultiLayerPerceptron, assemble_atom_pair_feature
-from model.utils import get_distance, activation_loader
-from model.edge import get_edge_encoder
-from model.schnet import SchNetEncoder
+from src.manifold.graph import DynamicMolGraph
+from src.model.layers import MultiLayerPerceptron, assemble_atom_pair_feature
+from src.model.utils import get_distance, activation_loader
+from src.model.edge import get_edge_encoder
+from src.model.schnet import SchNetEncoder
 
 
 EncoderDict = {

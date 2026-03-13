@@ -9,8 +9,8 @@ import torch
 from torch_scatter import scatter_mean
 from tqdm.auto import tqdm
 
-from diffusion.model import center_pos, clip_norm
-from model.geometry import get_distance
+from src.diffusion.model import center_pos, clip_norm
+from src.model.geometry import get_distance
 
 
 # ---------------------------------------------------------------------------

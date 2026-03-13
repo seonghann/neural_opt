@@ -84,7 +84,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
     from omegaconf import OmegaConf
-    from dataset.data_module import load_datamodule
+    from src.dataset.data_module import load_datamodule
 
     # --- Load dataset to get MMFF positions ---
     config = OmegaConf.load('data/qm9m/riemannian_data_sampling/riemannian_data_sampling.yaml')

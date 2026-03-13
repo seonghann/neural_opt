@@ -1,4 +1,4 @@
-from utils.chem import ATOM_ENCODER, BOND_TYPES_ENCODER, BOND_TYPES_DECODER, ATOMIC_NUMBERS
+from src.utils.chem import ATOM_ENCODER, BOND_TYPES_ENCODER, BOND_TYPES_DECODER, ATOMIC_NUMBERS
 
 import rdkit.Chem as Chem
 import rdkit

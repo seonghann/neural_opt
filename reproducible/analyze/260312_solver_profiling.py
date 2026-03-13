@@ -32,14 +32,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from torch import vmap
 from omegaconf import OmegaConf
-from dataset.data_module import load_datamodule
-from manifold.solver import (
+from src.dataset.data_module import load_datamodule
+from src.manifold.solver import (
     GeodesicSolver,
     redefine_edge_index,
     redefine_with_pad,
     batch_pinv1,
 )
-from manifold.graph import MolGraph
+from src.manifold.graph import MolGraph
 
 
 def profile_single_advance(solver, x, x_dot, index_tensor, atom_type, done, dt, device):

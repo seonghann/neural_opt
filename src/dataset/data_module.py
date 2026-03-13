@@ -10,7 +10,7 @@ from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.loader import DataLoader
 import torch
 
-from dataset.process_smarts import process_smarts, process_smarts_single
+from src.dataset.process_smarts import process_smarts, process_smarts_single
 
 
 def load_datamodule(config):
@@ -245,7 +245,7 @@ class GrambowDataModule(AbstractDataModule):
         self.data_split = config.dataset.data_split
         self.dtype = torch.float64 if config.dataset.dtype == "float64" else torch.float32
 
-        base_path = pathlib.Path(os.path.realpath(__file__)).parents[1]
+        base_path = pathlib.Path(os.path.realpath(__file__)).parents[2]
         print(f"debug] (GrambowDataModule) \n\tbase_path: {base_path}", end="")
         root_path = os.path.join(base_path, self.datadir)
         print(f"\n\troot_path: {root_path}")
@@ -423,7 +423,7 @@ class QM9DataModule(AbstractDataModule):
         self.data_split = config.dataset.data_split
         self.dtype = torch.float64 if config.dataset.dtype == "float64" else torch.float32
 
-        base_path = pathlib.Path(os.path.realpath(__file__)).parents[1]
+        base_path = pathlib.Path(os.path.realpath(__file__)).parents[2]
         print(f"debug] (QM9DataModule) \n\tbase_path: {base_path}", end="")
         root_path = os.path.join(base_path, self.datadir)
         print(f"\n\troot_path: {root_path}")

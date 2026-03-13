@@ -6,7 +6,11 @@ This is the base module that contains shared functionality.
 
 import argparse
 import os
+import sys
 import pickle
+
+# Ensure neural_opt/ is on the path when running from scripts/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 
@@ -17,9 +21,9 @@ from omegaconf import OmegaConf
 from ase import Atoms
 from ase.build.rotate import minimize_rotation_and_translation
 
-from utils.chem import ATOMIC_NUMBERS
-from dataset.data_module import load_datamodule
-from manifold.solver import GeodesicSolver
+from src.utils.chem import ATOMIC_NUMBERS
+from src.dataset.data_module import load_datamodule
+from src.manifold.solver import GeodesicSolver
 
 
 @dataclass

@@ -76,7 +76,7 @@ general:
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
   # test_only: /home/jeheon/Projects/neural_opt/checkpoints/rdsm.qm7x.finetuning.20250620.hidden_dim256.t1_1500.t150_30times/epoch3140_loss0.00060.ckpt
-  test_only: ./checkpoints/rdsm.qm7x.finetuned.ckpt
+  test_only: ./reproducible/checkpoints/rdsm.qm7x.finetuned.ckpt
   evaluate_all_checkpoints:
 
 sampling:

@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from math import pi as PI
 
-from model.layers import MeanReadout, SumReadout, MultiLayerPerceptron
+from src.model.layers import MeanReadout, SumReadout, MultiLayerPerceptron
 
 
 class GaussianSmearing(torch.nn.Module):
@@ -171,7 +171,7 @@ class SchNetEncoder(Module):
     @classmethod
     def from_config(cls, config):
         if config.edge_emb:
-            from model.edge import MLPEdgeEncoder
+            from src.model.edge import MLPEdgeEncoder
             edge_emb = MLPEdgeEncoder(config.hidden_dim, config.mlp_act)
         else:
             edge_emb = None

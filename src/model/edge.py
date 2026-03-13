@@ -11,7 +11,7 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from math import pi as PI
 
-from model.layers import MeanReadout, SumReadout, MultiLayerPerceptron, GaussianSmearing
+from src.model.layers import MeanReadout, SumReadout, MultiLayerPerceptron, GaussianSmearing
 
 
 class GaussianSmearingEdgeEncoder(Module):

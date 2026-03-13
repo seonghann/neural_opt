@@ -37,9 +37,9 @@ train:
 dataset:
   type: molecule
   name: MMFFtoDFT
-  datadir: data_qm9m_MMFFtoDFT
-  raw_datadir: ./data/qm9m/MMFFtoDFT_input
-  data_split: ./data/qm9m/data_split.pkl
+  datadir: data/qm9m_MMFFtoDFT
+  raw_datadir: ./data/qm9m_raw/MMFFtoDFT_input
+  data_split: ./data/qm9m_raw/data_split.pkl
   dtype: float32  # deprecated
 
 debug:
@@ -57,8 +57,8 @@ general:
   # gpus: 0
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
-  # test_only: ./checkpoints/rdsm.qm9.pretrained.ckpt
-  test_only: ./checkpoints/rdsm.qm9.finetuned.ckpt
+  # test_only: ./reproducible/checkpoints/rdsm.qm9.pretrained.ckpt
+  test_only: ./reproducible/checkpoints/rdsm.qm9.finetuned.ckpt
   evaluate_all_checkpoints:
 
 sampling:

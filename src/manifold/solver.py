@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.utils import unbatch, unbatch_edge_index
-from utils.chem import ATOMIC_RADII_LIST
+from src.utils.chem import ATOMIC_RADII_LIST
 from torch.nn.utils.rnn import pad_sequence
 from torch import vmap
 

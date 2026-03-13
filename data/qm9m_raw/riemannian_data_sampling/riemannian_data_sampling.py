@@ -5,10 +5,10 @@ Riemannian data sampling for fine-tuning
 from tqdm import tqdm
 import numpy as np
 import torch
-from manifold.graph import MolGraph, RxnGraph
+from src.manifold.graph import MolGraph, RxnGraph
 from torch_geometric.data import Batch
 import pandas as pd
-from utils.chem import ATOMIC_NUMBERS
+from src.utils.chem import ATOMIC_NUMBERS
 from typing import List
 
 _index_to_atomic = {v: k for k, v in ATOMIC_NUMBERS.items()}
@@ -274,10 +274,10 @@ if __name__ == "__main__":
     from torch_scatter import scatter_sum
     from ase import Atoms
 
-    from dataset.data_module import load_datamodule
+    from src.dataset.data_module import load_datamodule
     from omegaconf import OmegaConf
-    from manifold.solver import GeodesicSolver
-    from diffusion.noise_scheduler import load_noise_scheduler
+    from src.manifold.solver import GeodesicSolver
+    from src.diffusion.noise_scheduler import load_noise_scheduler
 
     if args.save_xyz:
         os.makedirs(args.save_xyz, exist_ok=True)

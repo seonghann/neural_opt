@@ -7,12 +7,12 @@ Calculate RMSD, DMAE, q_norm(geodesic length) and save it as csv file.
 import sys
 import os
 import torch
-from utils.chem import ATOMIC_NUMBERS
+from src.utils.chem import ATOMIC_NUMBERS
 
 
 # Add the project root directory to sys.path for upper-level imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-from evaluate_accuracy import GeometryMetrics
+from scripts.evaluate_accuracy import GeometryMetrics
 
 
 def map_atomic_numbers(atom_numbers):
@@ -66,9 +66,9 @@ if __name__ == "__main__":
     # TODO: Check os.path.exists of xyz path
 
     import pandas as pd
-    from diffusion.noise_scheduler import load_noise_scheduler
+    from src.diffusion.noise_scheduler import load_noise_scheduler
     from omegaconf import OmegaConf
-    from manifold.solver import GeodesicSolver
+    from src.manifold.solver import GeodesicSolver
 
     config = OmegaConf.load(args.config_yaml)
     config.manifold.ode_solver.alpha = args.alpha

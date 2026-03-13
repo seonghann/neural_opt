@@ -56,7 +56,7 @@ general:
   # gpus: 0
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
   resume:
-  test_only: ./checkpoints/edsm.qm7x.ckpt
+  test_only: ./reproducible/checkpoints/edsm.qm7x.ckpt
   evaluate_all_checkpoints:
 
 sampling:

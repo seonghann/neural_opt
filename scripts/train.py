@@ -18,19 +18,22 @@ import time
 import argparse
 import logging
 
+# Ensure neural_opt/ is on the path when running from scripts/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import torch
 import wandb
 from omegaconf import OmegaConf
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 
-from dataset.data_module import load_datamodule
-from diffusion.model import DiffusionModel
-from diffusion.sampling import sample_batch_simple, sample_batch_diffusion
-from metrics.metrics import LossFunction, TrainMetrics, ValidMetrics, SamplingMetrics
-from model import get_optimizer, get_scheduler
-from utils.wandb_utils import setup_wandb
-from sample import load_checkpoint
+from src.dataset.data_module import load_datamodule
+from src.diffusion.model import DiffusionModel
+from src.diffusion.sampling import sample_batch_simple, sample_batch_diffusion
+from src.metrics.metrics import LossFunction, TrainMetrics, ValidMetrics, SamplingMetrics
+from src.model import get_optimizer, get_scheduler
+from src.utils.wandb_utils import setup_wandb
+from scripts.sample import load_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,8 @@ def parse_args():
                         help="Path to Accelerate checkpoint directory to resume from")
     parser.add_argument("--resume_pl", type=str, default=None,
                         help="Path to PL .ckpt file (for model weights only, no optimizer state)")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Override number of epochs (for smoke testing)")
     return parser.parse_args()
 
 

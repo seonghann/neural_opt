@@ -31,13 +31,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from torch import vmap
 from omegaconf import OmegaConf
-from dataset.data_module import load_datamodule
-from manifold.solver import (
+from src.dataset.data_module import load_datamodule
+from src.manifold.solver import (
     GeodesicSolver,
     redefine_edge_index,
     redefine_with_pad,
 )
-from manifold.graph import MolGraph
+from src.manifold.graph import MolGraph
 
 
 def pinv_vmap_svd(J, rtol=1e-4, atol=1e-2):

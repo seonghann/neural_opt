@@ -9,11 +9,11 @@ import torch
 import torch.nn as nn
 from torch_scatter import scatter_mean, scatter_sum
 
-from manifold.graph import RxnGraph, DynamicRxnGraph, MolGraph, DynamicMolGraph
-from manifold.solver import GeodesicSolver
-from diffusion.noise_scheduler import load_noise_scheduler
-from model.encoder import GeoDiffEncoder
-from model.geometry import get_distance, eq_transform
+from src.manifold.graph import RxnGraph, DynamicRxnGraph, MolGraph, DynamicMolGraph
+from src.manifold.solver import GeodesicSolver
+from src.diffusion.noise_scheduler import load_noise_scheduler
+from src.model.encoder import GeoDiffEncoder
+from src.model.geometry import get_distance, eq_transform
 
 
 # ---------------------------------------------------------------------------

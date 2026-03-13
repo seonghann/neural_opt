@@ -27,10 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 import numpy as np
 from omegaconf import OmegaConf
-from dataset.data_module import load_datamodule
-from manifold.solver import GeodesicSolver, redefine_edge_index, redefine_with_pad
-from manifold.graph import MolGraph
-import manifold.solver as solver_module
+from src.dataset.data_module import load_datamodule
+from src.manifold.solver import GeodesicSolver, redefine_edge_index, redefine_with_pad
+from src.manifold.graph import MolGraph
+import src.manifold.solver as solver_module
 from torch import vmap
 
 

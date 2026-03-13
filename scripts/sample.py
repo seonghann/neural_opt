@@ -14,16 +14,19 @@ import os
 import time
 import argparse
 
+# Ensure neural_opt/ is on the path when running from scripts/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import torch
 import wandb
 from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 
-from dataset.data_module import load_datamodule
-from diffusion.model import DiffusionModel
-from diffusion.sampling import sample_batch_simple, sample_batch_diffusion
-from metrics.metrics import SamplingMetrics
-from utils.wandb_utils import setup_wandb
+from src.dataset.data_module import load_datamodule
+from src.diffusion.model import DiffusionModel
+from src.diffusion.sampling import sample_batch_simple, sample_batch_diffusion
+from src.metrics.metrics import SamplingMetrics
+from src.utils.wandb_utils import setup_wandb
 
 
 def load_checkpoint(model, ckpt_path, device="cpu"):

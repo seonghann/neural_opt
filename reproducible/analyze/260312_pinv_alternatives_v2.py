@@ -33,13 +33,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from torch import vmap
 from omegaconf import OmegaConf
-from dataset.data_module import load_datamodule
-from manifold.solver import (
+from src.dataset.data_module import load_datamodule
+from src.manifold.solver import (
     GeodesicSolver,
     redefine_edge_index,
     redefine_with_pad,
 )
-from manifold.graph import MolGraph
+from src.manifold.graph import MolGraph
 
 
 def pinv_vmap_svd(J, rtol=1e-4, atol=1e-2):
@@ -279,7 +279,7 @@ def main():
         dx_ref, dx_dot_ref = solver._advance(done, x.clone(), x_dot.clone(), index_tensor, at, dt, q_type="morse", J=J_for_advance)
 
         # _advance with modified pinv (monkey-patch temporarily)
-        import manifold.solver as solver_module
+        import src.manifold.solver as solver_module
         original_pinv = solver_module.batch_pinv1
 
         if 'eigh' in best_name:

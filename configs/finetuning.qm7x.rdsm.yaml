@@ -59,7 +59,7 @@ general:
   # gpus: 4
   gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: ./checkpoints/rdsm.qm7x.pretrained.ckpt
+  resume: ./reproducible/checkpoints/rdsm.qm7x.pretrained.ckpt
   # resume: /home/jeheon/Projects/neural_opt/checkpoints/rdsm.qm7x.pretrained.20250620.hidden_dim256.t1_1500/epoch2945_norm_perr0.02395.ckpt
   test_only:
   evaluate_all_checkpoints:
