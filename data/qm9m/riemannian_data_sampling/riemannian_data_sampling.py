@@ -286,12 +286,17 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     config = OmegaConf.load(args.config_yaml)
-    config.manifold.ode_solver.alpha = args.alpha
-    config.manifold.ode_solver.beta = args.beta
+    if args.alpha is not None:
+        config.manifold.ode_solver.alpha = args.alpha
+    if args.beta is not None:
+        config.manifold.ode_solver.beta = args.beta
     config.manifold.ode_solver.gamma = args.gamma
-    config.manifold.ode_solver.svd_tol = args.svd_tol
-    config.diffusion.scheduler.t0 = args.t0
-    config.diffusion.scheduler.t1 = args.t1
+    if args.svd_tol is not None:
+        config.manifold.ode_solver.svd_tol = args.svd_tol
+    if args.t0 is not None:
+        config.diffusion.scheduler.t0 = args.t0
+    if args.t1 is not None:
+        config.diffusion.scheduler.t1 = args.t1
     print("config=\n", config)
 
     datamodule = load_datamodule(config)

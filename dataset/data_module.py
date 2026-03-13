@@ -279,7 +279,12 @@ class QM9Dataset(InMemoryDataset):
         self.raw_datadir = raw_datadir
         self.data_split = data_split
         super(QM9Dataset, self).__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[self.file_idx], weights_only=False)
+        loaded = torch.load(self.processed_paths[self.file_idx], weights_only=False)
+        if loaded[0] is None:
+            print(f"Warning: stage={stage} has no data (empty dataset)")
+            self.data, self.slices = None, None
+        else:
+            self.data, self.slices = loaded
         return
 
     @property
@@ -402,7 +407,11 @@ class QM9Dataset(InMemoryDataset):
                 q_target=q_target,
             )
             data_list.append(data)
-        torch.save(self.collate(data_list), self.processed_paths[self.file_idx])
+        if len(data_list) == 0:
+            print(f"Warning: no matching data found for stage={self.stage}. Saving empty dataset.")
+            torch.save((None, None), self.processed_paths[self.file_idx])
+        else:
+            torch.save(self.collate(data_list), self.processed_paths[self.file_idx])
         print(f"Saved data to {self.processed_paths[self.file_idx]}")
         return
 

@@ -10,6 +10,7 @@ and saves results (dynamic graph objects).
 """
 
 import sys
+import os
 import time
 import argparse
 
@@ -27,35 +28,46 @@ from utils.wandb_utils import setup_wandb
 
 def load_checkpoint(model, ckpt_path, device="cpu"):
     """
-    Load a PL checkpoint into the plain DiffusionModel.
+    Load a checkpoint into the plain DiffusionModel.
 
-    PL checkpoints store state_dict with keys like 'NeuralNet.atom_embedding.weight'.
-    Since DiffusionModel keeps self.NeuralNet, the keys already match for the
-    learnable parameters. We just need to extract the state_dict from the PL wrapper.
+    Supports two formats:
+    - PL checkpoint (.ckpt): keys under ckpt['state_dict']
+    - Accelerate checkpoint (directory with model.safetensors): keys directly in state_dict
     """
     print(f"Loading checkpoint: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
-    # PL stores all model params under ckpt['state_dict']
-    pl_state = ckpt["state_dict"]
+    # Detect format: directory with safetensors = Accelerate, else PL .ckpt
+    safetensors_path = os.path.join(ckpt_path, "model.safetensors") if os.path.isdir(ckpt_path) else None
+
+    if safetensors_path and os.path.exists(safetensors_path):
+        from safetensors.torch import load_file
+        all_state = load_file(safetensors_path, device=str(device))
+    else:
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        all_state = ckpt["state_dict"]
 
     # Filter to only NeuralNet keys (the only learnable parameters)
     model_state = {}
-    for k, v in pl_state.items():
+    for k, v in all_state.items():
         if k.startswith("NeuralNet."):
             model_state[k] = v
 
     # Load into model (DiffusionModel has self.NeuralNet)
     missing, unexpected = model.load_state_dict(model_state, strict=False)
 
-    # The "missing" keys should be zero -- NeuralNet covers all learnable params
-    # "unexpected" should be empty since we filtered
+    # Report missing and unexpected keys
     if missing:
-        # Check that missing keys are all non-learnable (noise_schedule, geodesic_solver, etc.)
         learnable_missing = [k for k in missing if k.startswith("NeuralNet.")]
+        non_learnable_missing = len(missing) - len(learnable_missing)
         if learnable_missing:
-            raise RuntimeError(f"Missing learnable keys: {learnable_missing}")
-        print(f"  Non-learnable keys (expected): {len(missing)} skipped")
+            # Partial load is OK (e.g., E-DM checkpoint → R-DM model with extra layers)
+            print(f"  Learnable keys not in checkpoint (randomly initialized): {len(learnable_missing)}")
+            for k in learnable_missing[:5]:
+                print(f"    {k}")
+            if len(learnable_missing) > 5:
+                print(f"    ... and {len(learnable_missing) - 5} more")
+        if non_learnable_missing:
+            print(f"  Non-learnable keys (expected): {non_learnable_missing} skipped")
     if unexpected:
         print(f"  WARNING: Unexpected keys: {unexpected}")
 

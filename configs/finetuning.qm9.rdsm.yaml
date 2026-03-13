@@ -1,6 +1,6 @@
 train:
-  batch_size: 300
-  num_workers: 8
+  batch_size: 100
+  num_workers: 4
   lambda_x_train: 0
   lambda_q_train: 1
   lambda_x_valid: 0
@@ -37,8 +37,8 @@ train:
 dataset:
   type: molecule
   name: MMFFtoDFT
-  datadir: data_qm9m_alpha1.7_beta0.01_3times
-  raw_datadir: /home/jhwoo/Projects/neural_opt/pl_test/data_sampling/xyz_alpha1.7_beta0.01_gamma0.0_svdtol_1e-2_t150_seed42_1_2
+  datadir: data_qm9m_riemannian_3seeds
+  raw_datadir: ./data/qm9m/riemannian_xyz/combined
   data_split: ./data/qm9m/data_split.pkl
   dtype: float32  # deprecated
 
@@ -56,7 +56,7 @@ general:
   gpus: 4
   # gpus: 1
   strategy: ddp  # 'deepspeed'  # auto, ddp, fsdp, deepspeed,
-  resume: ./checkpoints/rdsm.qm9.pretrained.ckpt
+  resume:  # loaded via --resume_pl
   test_only:
   evaluate_all_checkpoints:
 
