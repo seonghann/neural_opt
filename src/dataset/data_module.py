@@ -8,6 +8,7 @@ import random
 from ase import io
 from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.loader import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 import torch
 
 from src.dataset.process_smarts import process_smarts, process_smarts_single
@@ -40,14 +41,37 @@ class AbstractDataModule:
         self.input_dims = None
         self.output_dims = None
 
+        # DDP samplers (created lazily)
+        self._train_sampler = None
+        self._val_sampler = None
+        self._test_sampler = None
+
     def __getitem__(self, idx):
         return self._train_dataset[idx]
+
+    def setup_distributed(self, num_replicas: int, rank: int):
+        """Create DistributedSamplers for DDP training."""
+        self._train_sampler = DistributedSampler(
+            self._train_dataset, num_replicas=num_replicas, rank=rank, shuffle=True,
+        )
+        self._val_sampler = DistributedSampler(
+            self._val_dataset, num_replicas=num_replicas, rank=rank, shuffle=False,
+        )
+        self._test_sampler = DistributedSampler(
+            self._test_dataset, num_replicas=num_replicas, rank=rank, shuffle=False,
+        )
+
+    def set_epoch(self, epoch: int):
+        """Call at the start of each epoch for proper shuffling in DDP."""
+        if self._train_sampler is not None:
+            self._train_sampler.set_epoch(epoch)
 
     def train_dataloader(self):
         return DataLoader(
             self._train_dataset,
             batch_size=self._batch_size,
-            shuffle=True,
+            shuffle=(self._train_sampler is None),
+            sampler=self._train_sampler,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
         )
@@ -57,6 +81,7 @@ class AbstractDataModule:
             self._val_dataset,
             batch_size=self._batch_size,
             shuffle=False,
+            sampler=self._val_sampler,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
         )
@@ -66,6 +91,7 @@ class AbstractDataModule:
             self._test_dataset,
             batch_size=self._batch_size,
             shuffle=False,
+            sampler=self._test_sampler,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
         )

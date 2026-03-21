@@ -55,20 +55,69 @@ def load_checkpoint(model, ckpt_path, device="cpu"):
         if k.startswith("NeuralNet."):
             model_state[k] = v
 
+    # Remap legacy PL checkpoint keys (named attributes → layers.N aliases)
+    # GeoDiffEncoder registers submodules both as named attrs and in a ModuleList:
+    #   layers.0 = atom_embedding, layers.1 = edge_encoder,
+    #   layers.2 = encoder, layers.3 = score_mlp, layers.4 = atom_feat_embedding
+    # PL checkpoints used layers.N naming; Accelerate checkpoints use named attrs.
+    # Since state_dict() exposes both paths (they alias the same tensors),
+    # we normalize everything to the layers.N convention for compatibility.
+    _NAMED_TO_LAYERS = {
+        "NeuralNet.atom_embedding.": "NeuralNet.layers.0.",
+        "NeuralNet.edge_encoder.": "NeuralNet.layers.1.",
+        "NeuralNet.encoder.": "NeuralNet.layers.2.",
+        "NeuralNet.score_mlp.": "NeuralNet.layers.3.",
+        "NeuralNet.atom_feat_embedding.": "NeuralNet.layers.4.",
+    }
+    remapped_state = {}
+    num_remapped = 0
+    for k, v in model_state.items():
+        new_k = k
+        for named_prefix, layers_prefix in _NAMED_TO_LAYERS.items():
+            if k.startswith(named_prefix):
+                new_k = layers_prefix + k[len(named_prefix):]
+                num_remapped += 1
+                break
+        remapped_state[new_k] = v
+    if num_remapped > 0:
+        print(f"  Remapped {num_remapped} legacy key(s) to layers.N convention")
+    model_state = remapped_state
+
     # Load into model (DiffusionModel has self.NeuralNet)
     missing, unexpected = model.load_state_dict(model_state, strict=False)
 
     # Report missing and unexpected keys
+    # GeoDiffEncoder exposes each parameter via two paths (named attr and ModuleList alias).
+    # Filter out alias-path keys that are already loaded via the other path.
+    _ALIAS_PREFIXES = list(_NAMED_TO_LAYERS.keys()) + list(_NAMED_TO_LAYERS.values())
     if missing:
-        learnable_missing = [k for k in missing if k.startswith("NeuralNet.")]
-        non_learnable_missing = len(missing) - len(learnable_missing)
-        if learnable_missing:
-            # Partial load is OK (e.g., E-DM checkpoint → R-DM model with extra layers)
-            print(f"  Learnable keys not in checkpoint (randomly initialized): {len(learnable_missing)}")
-            for k in learnable_missing[:5]:
+        # A key is truly missing only if neither its alias nor itself was loaded
+        loaded_suffixes = set()
+        for k in model_state:
+            # Strip the first two path components (e.g., "NeuralNet.layers.0.") to get suffix
+            for pfx in _ALIAS_PREFIXES:
+                if k.startswith(pfx):
+                    loaded_suffixes.add(k[len(pfx):])
+                    break
+        truly_missing = []
+        for k in missing:
+            if not k.startswith("NeuralNet."):
+                continue
+            suffix = None
+            for pfx in _ALIAS_PREFIXES:
+                if k.startswith(pfx):
+                    suffix = k[len(pfx):]
+                    break
+            if suffix is not None and suffix in loaded_suffixes:
+                continue  # alias of an already-loaded key
+            truly_missing.append(k)
+        non_learnable_missing = len([k for k in missing if not k.startswith("NeuralNet.")])
+        if truly_missing:
+            print(f"  Learnable keys not in checkpoint (randomly initialized): {len(truly_missing)}")
+            for k in truly_missing[:5]:
                 print(f"    {k}")
-            if len(learnable_missing) > 5:
-                print(f"    ... and {len(learnable_missing) - 5} more")
+            if len(truly_missing) > 5:
+                print(f"    ... and {len(truly_missing) - 5} more")
         if non_learnable_missing:
             print(f"  Non-learnable keys (expected): {non_learnable_missing} skipped")
     if unexpected:

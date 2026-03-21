@@ -1,5 +1,5 @@
 train:
-  batch_size: 300
+  batch_size: 500
   num_workers: 8
   lambda_x_train: 0
   lambda_q_train: 1
@@ -17,7 +17,7 @@ train:
 
   optimizer:
     type: adam
-    lr: 5.e-4
+    lr: 3.e-4
     weight_decay: 0.
     beta1: 0.95
     beta2: 0.999
@@ -25,7 +25,7 @@ train:
     type: plateau
     factor: 0.8
     patience: 10
-    min_lr: 0.000125
+    min_lr: 7.5e-5
 
   seed: 42
   epochs: 3000

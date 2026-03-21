@@ -1,5 +1,5 @@
 train:
-  batch_size: 300
+  batch_size: 1000
   num_workers: 8
   lambda_x_train: 1
   lambda_q_train: 1

@@ -8,5 +8,12 @@ NeuralOpt.egg-info/
 *.bin
 *.pkl
 data/*/processed/
-reproducible/checkpoints/
 debug/
+
+# Training outputs
+checkpoints/
+logs/
+wandb/
+
+# Published checkpoints (tracked via LFS or Zenodo, not in git)
+reproducible/checkpoints/
