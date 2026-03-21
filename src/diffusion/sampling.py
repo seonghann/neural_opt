@@ -359,7 +359,14 @@ def sample_batch_diffusion(
 
     Returns:
         List of per-molecule Data objects with .traj attribute
+
+    Note: This function requires a discrete scheduler (TSDiffNoiseScheduler).
+    For continuous-time sampling, use sample_batch_langevin instead.
     """
+    assert hasattr(model.noise_schedule, 'alphas'), (
+        "sample_batch_diffusion requires discrete TSDiffNoiseScheduler. "
+        "Use sample_batch_langevin for continuous schedulers."
+    )
     alphas = model.noise_schedule.alphas
     sigmas = (1.0 - alphas).sqrt() / alphas.sqrt()
 

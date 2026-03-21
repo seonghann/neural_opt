@@ -24,7 +24,7 @@ from tqdm.auto import tqdm
 
 from src.dataset.data_module import load_datamodule
 from src.diffusion.model import DiffusionModel
-from src.diffusion.sampling import sample_batch_simple, sample_batch_diffusion, sample_batch_langevin, sample_batch_gradient_descent
+from src.diffusion.sampling import sample_batch_simple, sample_batch_langevin, sample_batch_gradient_descent
 from src.metrics.metrics import SamplingMetrics
 from src.utils.wandb_utils import setup_wandb
 
@@ -127,9 +127,33 @@ def load_checkpoint(model, ckpt_path, device="cpu"):
     return model
 
 
+SCORE_TYPE_ALIASES = {
+    # Paper name → internal score_type
+    "diffusion_sde": "langevin_exp",
+    "diffusion_ode": "langevin_exp",
+    "fm_ode": "cfm",
+    "fp_ode": "fixed_exp",
+    # Legacy names (keep backward compat)
+    "cfm": "cfm",
+    "langevin_exp": "langevin_exp",
+    "fixed_exp": "fixed_exp",
+    "diffusion": "diffusion",
+}
+
+# Map alias → stochastic override (None = use config value)
+STOCHASTIC_OVERRIDE = {
+    "diffusion_sde": True,
+    "diffusion_ode": False,
+}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Sampling script")
     parser.add_argument("config", type=str, help="Path to config YAML file")
+    parser.add_argument("--sampler", type=str, default=None,
+                        choices=list(SCORE_TYPE_ALIASES.keys()),
+                        help="Sampler type (overrides config.sampling.score_type). "
+                             "Options: diffusion_sde, diffusion_ode, fm_ode, fp_ode")
     parser.add_argument("--batch_idx_end", type=int, default=None,
                         help="Stop after this many batches (for quick testing)")
     parser.add_argument("--save_dynamic", type=str, default=None,
@@ -148,6 +172,13 @@ def main():
         config.sampling.batch_idx_end = args.batch_idx_end
     if args.save_dynamic is not None:
         config.debug.save_dynamic = args.save_dynamic
+    if args.sampler is not None:
+        alias = args.sampler
+        config.sampling.score_type = SCORE_TYPE_ALIASES[alias]
+        if alias in STOCHASTIC_OVERRIDE:
+            config.sampling.stochastic = STOCHASTIC_OVERRIDE[alias]
+        print(f"Sampler override: {alias} → score_type={config.sampling.score_type}, "
+              f"stochastic={config.sampling.stochastic}")
 
     torch.set_default_dtype(torch.float32)
 
@@ -189,7 +220,8 @@ def main():
             break
 
         batch = batch.to(device)
-        if config.sampling.score_type == "cfm":
+        score_type = config.sampling.score_type
+        if score_type == "cfm":
             batch_out = sample_batch_simple(
                 model,
                 batch,
@@ -198,16 +230,7 @@ def main():
                 num_cycles=config.sampling.num_cycles,
                 dynamic_graph_list=dynamic_graph_list,
             )
-        elif config.sampling.score_type == "diffusion":
-            batch_out = sample_batch_diffusion(
-                model,
-                batch,
-                config,
-                stochastic=stochastic,
-                start_from_time=getattr(config.sampling, 'start_from_time', None),
-                dynamic_graph_list=dynamic_graph_list,
-            )
-        elif config.sampling.score_type == "langevin_exp":
+        elif score_type == "langevin_exp":
             batch_out = sample_batch_langevin(
                 model,
                 batch,
@@ -215,7 +238,7 @@ def main():
                 stochastic=stochastic,
                 dynamic_graph_list=dynamic_graph_list,
             )
-        elif config.sampling.score_type == "fixed_exp":
+        elif score_type == "fixed_exp":
             batch_out = sample_batch_gradient_descent(
                 model,
                 batch,
@@ -223,7 +246,10 @@ def main():
                 dynamic_graph_list=dynamic_graph_list,
             )
         else:
-            raise NotImplementedError(f"Unsupported score_type: {config.sampling.score_type}")
+            raise NotImplementedError(
+                f"Unsupported score_type: {score_type}. "
+                f"Use --sampler with one of: {list(SCORE_TYPE_ALIASES.keys())}"
+            )
         samples.extend(batch_out)
 
     elapsed = time.time() - start

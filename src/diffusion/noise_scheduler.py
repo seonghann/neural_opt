@@ -25,8 +25,9 @@ def load_noise_scheduler(config):
     elif name == "continuous_tsdiff":
         from src.diffusion.continuous_scheduler import SigmoidDiffusionScheduler
         scheduler = SigmoidDiffusionScheduler(
-            beta_start=config.scheduler.beta_start,
-            beta_end=config.scheduler.beta_end,
+            c=getattr(config.scheduler, 'c', 12),
+            beta_start=getattr(config.scheduler, 'beta_start', 1e-7),
+            beta_end=getattr(config.scheduler, 'beta_end', 10),
             EPS=getattr(config.scheduler, 'EPS', 1e-6),
         )
     elif name == "none":

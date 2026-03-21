@@ -98,13 +98,13 @@ model:
 
 diffusion:
   scheduler:
-    t0: 0
-    t1: 5000
-    name: tsdiff
+    t_start: 0.0
+    t_end: 1.0
+    name: continuous_tsdiff
+    c: 12
     beta_start: 1.e-7
-    beta_end: 2.e-3
-    num_diffusion_timesteps: 5000
-    scheduler_type: sigmoid
+    beta_end: 10
+    num_diffusion_timesteps: 5000  # reference: discrete equivalent
 
 manifold:
   ode_solver:

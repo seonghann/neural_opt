@@ -84,19 +84,26 @@ class DiffusionModel(nn.Module):
             raise ValueError(f"Dataset type not supported: {config.dataset.type}")
 
     # -----------------------------------------------------------------
-    # Time embedding
+    # Time utilities
     # -----------------------------------------------------------------
+
+    def _ensure_continuous_time(self, time_step: torch.Tensor) -> torch.Tensor:
+        """Convert discrete integer timesteps to continuous float if needed.
+
+        Legacy finetuning data (e.g., Zenodo) stores integer timesteps from the
+        discrete TSDiffNoiseScheduler (0..N-1). This converts them to continuous
+        time t ∈ [0, 1] via t_cont = t_disc / N.
+        """
+        if time_step.is_floating_point():
+            return time_step
+        N = self.config.diffusion.scheduler.num_diffusion_timesteps
+        return time_step.float() / N
 
     def get_normalized_time(self, graph):
         """Compute normalized time for time embedding (ablation feature, default OFF)."""
         if not getattr(self.config.model, 'use_time_embedding', False):
             return None
-        time_normalization = getattr(self.config.model, 'time_normalization', 't1')
-        if time_normalization == 't1':
-            max_timesteps = self.config.diffusion.scheduler.t1
-        else:
-            max_timesteps = self.config.diffusion.scheduler.num_diffusion_timesteps
-        return graph.t.float() / max_timesteps
+        return self._ensure_continuous_time(graph.t)
 
     # -----------------------------------------------------------------
     # Forward pass
@@ -264,9 +271,10 @@ class DiffusionModel(nn.Module):
 
     def get_loss_weight(self, time_step: torch.Tensor) -> torch.Tensor:
         """Weight of loss at each time step (lambda(t))."""
+        time_step = self._ensure_continuous_time(time_step)
         loss_weight_type = self.config.train.loss_weight
         if loss_weight_type == "diffusion":
-            a = self.noise_schedule.get_alpha(time_step, device=time_step.device)
+            a = self.noise_schedule.get_alpha(time_step) ** 2  # alpha_bar_sq
             weight = a / (1.0 - a)
         elif loss_weight_type == "ddbm_h_transform":
             sigma2 = self.noise_schedule.get_sigma(time_step)
@@ -284,9 +292,11 @@ class DiffusionModel(nn.Module):
     # -----------------------------------------------------------------
 
     def apply_noise_diffusion(self, data, do_scale=True):
-        """Diffusion noise sampling (no bridge). Refer to GeoDiff, TSDiff."""
-        assert self.noise_schedule.name == "TSDiffNoiseScheduler"
+        """Diffusion noise sampling (no bridge). Refer to GeoDiff, TSDiff.
 
+        Samples continuous time uniformly in [t_start, t_end] and computes
+        alpha_bar_sq = alpha(t)^2 from the continuous scheduler.
+        """
         graph = self.graph_cls.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
@@ -299,12 +309,11 @@ class DiffusionModel(nn.Module):
         pos = center_pos(pos, data.batch)
         device = pos.device
 
-        t0 = self.config.diffusion.scheduler.t0
-        t1 = self.config.diffusion.scheduler.t1
-        time_step = torch.randint(t0, t1, size=(batch_size,), device=device)
-        # print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
+        t_start = self.config.diffusion.scheduler.t_start
+        t_end = self.config.diffusion.scheduler.t_end
+        time_step = torch.rand(size=(batch_size,), device=device) * (t_end - t_start) + t_start
         time_step = time_step.sort()[0]
-        a = self.noise_schedule.get_alpha(time_step, device=device)
+        a = self.noise_schedule.get_alpha(time_step) ** 2  # alpha(t)^2 ≈ cumprod(1-beta)
 
         # Perturb pos
         a_pos = a.index_select(0, node2graph).unsqueeze(-1)
@@ -340,9 +349,11 @@ class DiffusionModel(nn.Module):
         return graph, pos_t, pos_t, time_step, pos_target, d_target
 
     def apply_noise_diffusion_custom(self, data):
-        """Using custom q_target, pos_target, and time_step from data."""
-        assert self.noise_schedule.name == "TSDiffNoiseScheduler"
+        """Using custom q_target, pos_target, and time_step from data.
 
+        Handles legacy data with integer timesteps (from discrete TSDiff scheduler)
+        by converting to continuous time via t_cont = t_disc / N.
+        """
         graph = self.graph_cls.from_batch(data)
         edge_index = graph.full_edge(upper_triangle=True)[0]
 
@@ -355,7 +366,7 @@ class DiffusionModel(nn.Module):
         pos = center_pos(pos, data.batch)
         device = pos.device
 
-        time_step = data.time_step
+        time_step = self._ensure_continuous_time(data.time_step)
         pos_t = data.pos[:, 1]
 
         q_target = data.q_target

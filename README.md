@@ -100,7 +100,7 @@ bash run_parallel.sh --num_workers 8 \
   --config_yaml riemannian_data_sampling.yaml \
   --sampling_type riemannian \
   --alpha 1.7 --beta 0.01 --svd_tol 1e-2 \
-  --t0 0 --t1 150 \
+  --t_start 0 --t_end 0.03 \
   --save_xyz xyz_seed42 \
   --save_csv sampling_seed42.csv \
   --seed 42 --dataloader train
@@ -110,7 +110,7 @@ bash run_parallel.sh --num_workers 8 \
   --config_yaml riemannian_data_sampling.yaml \
   --sampling_type riemannian \
   --alpha 1.7 --beta 0.01 --svd_tol 1e-2 \
-  --t0 0 --t1 150 \
+  --t_start 0 --t_end 0.03 \
   --save_xyz xyz_seed1 \
   --save_csv sampling_seed1.csv \
   --seed 1 --dataloader train
@@ -120,7 +120,7 @@ bash run_parallel.sh --num_workers 8 \
   --config_yaml riemannian_data_sampling.yaml \
   --sampling_type riemannian \
   --alpha 1.7 --beta 0.01 --svd_tol 1e-2 \
-  --t0 0 --t1 150 \
+  --t_start 0 --t_end 0.03 \
   --save_xyz xyz_seed2 \
   --save_csv sampling_seed2.csv \
   --seed 2 --dataloader train
@@ -136,7 +136,7 @@ python riemannian_data_sampling.py \
   --config_yaml riemannian_data_sampling.yaml \
   --sampling_type riemannian \
   --alpha 1.7 --beta 0.01 --svd_tol 1e-2 \
-  --t0 0 --t1 150 \
+  --t_start 0 --t_end 0.03 \
   --save_xyz xyz_seed42 --seed 42 --dataloader train
 ```
 
@@ -238,17 +238,62 @@ accelerate launch --config_file accelerate_config.yaml \
 
 ## Sampling
 
-Generate optimized molecular geometries using the trained model:
+Generate optimized molecular geometries using the trained model.
+Four sampling methods are available, all operating on the same time-independent model:
+
+| Method | Paper name | `--sampler` | Description |
+|--------|-----------|-------------|-------------|
+| Flow-matching ODE | FM ODE | `fm_ode` | dx = f/t dt (default, best median RMSD) |
+| Diffusion ODE | Prob-flow ODE | `diffusion_ode` | dx = 0.5 dσ²/dt · f/σ² dt |
+| Diffusion SDE | Reverse SDE | `diffusion_sde` | Diffusion ODE + Langevin noise |
+| Fixed-point ODE | FP ODE | `fp_ode` | dx = f dτ (time-independent iteration) |
+
+### Quick start (FM ODE, default)
 
 ```bash
 python scripts/sample.py configs/sampling.qm9.rdsm.yaml
 ```
 
-- Uses CFM (Conditional Flow Matching) score function
-- 128 Euler ODE steps, t: 1 → 0
-- Output: `save_dynamic.qm9.rdsm.finetuned.pt`
+### Running different samplers
 
-To use a specific checkpoint, edit `configs/sampling.qm9.rdsm.yaml`:
+Use `--sampler` to select the sampling method:
+
+```bash
+# FM ODE (default, 128 steps, t: 1→0)
+python scripts/sample.py configs/sampling.qm9.rdsm.yaml --sampler fm_ode
+
+# Diffusion ODE (probability-flow, 128 NFE, start_time=0.03)
+python scripts/sample.py configs/sampling.qm9.rdsm.langevin.yaml --sampler diffusion_ode
+
+# Diffusion SDE (reverse SDE with Langevin noise)
+python scripts/sample.py configs/sampling.qm9.rdsm.langevin.yaml --sampler diffusion_sde
+
+# Fixed-point ODE (gradient descent, τ: 0→6)
+python scripts/sample.py configs/sampling.qm9.rdsm.fixed_point.yaml --sampler fp_ode
+```
+
+### Sampling configurations
+
+Each sampler has a dedicated config with appropriate parameters:
+
+| Config | Sampler | Key parameters |
+|--------|---------|----------------|
+| `sampling.qm9.rdsm.yaml` | FM ODE | `sde_steps: 128`, `score_type: cfm` |
+| `sampling.qm9.rdsm.langevin.yaml` | Diffusion SDE/ODE | `nfe: 128`, `start_time: 0.03` |
+| `sampling.qm9.rdsm.fixed_point.yaml` | FP ODE | `total_time: 6`, `dt: 0.05` |
+
+### Expected results on QM9 (MMFF initial structures)
+
+| Method | RMSD mean (Å) | RMSD median (Å) |
+|--------|:---:|:---:|
+| FM ODE | 0.105 | **0.032** |
+| Diffusion ODE | 0.109 | 0.035 |
+| Diffusion SDE | 0.109 | 0.036 |
+| FP ODE | 0.104 | 0.032 |
+
+### Using different checkpoints
+
+Edit the `general.test_only` field in the config:
 
 ```yaml
 general:
@@ -259,7 +304,8 @@ general:
   # test_only: ./reproducible/checkpoints/rdsm.qm9.finetuned.ckpt
 ```
 
-For a quick test on a single batch:
+### Quick test on a single batch
+
 ```bash
 python scripts/sample.py configs/sampling.qm9.rdsm.yaml --batch_idx_end 1
 ```
@@ -303,7 +349,9 @@ neural_opt/
 ├── src/
 │   ├── diffusion/
 │   │   ├── model.py              # DiffusionModel (forward, noise sampling, transform)
-│   │   └── sampling.py           # CFM sampling (sample_batch_simple)
+│   │   ├── sampling.py           # Sampling functions (CFM, Langevin, Fixed-point)
+│   │   ├── continuous_scheduler.py  # SigmoidDiffusionScheduler (VP continuous-time)
+│   │   └── noise_scheduler.py    # Scheduler loader and legacy discrete schedulers
 │   ├── dataset/
 │   │   └── data_module.py        # DataModule with DDP DistributedSampler
 │   ├── manifold/

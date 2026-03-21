@@ -241,8 +241,8 @@ if __name__ == "__main__":
         type=float,
         help="svd_tol for Jacobian inverse",
     )
-    parser.add_argument("--t0", type=int, default=None, required=False)
-    parser.add_argument("--t1", type=int, default=None, required=False)
+    parser.add_argument("--t_start", type=float, default=None, required=False)
+    parser.add_argument("--t_end", type=float, default=None, required=False)
     parser.add_argument(
         "--retry",
         action="store_true",
@@ -293,10 +293,10 @@ if __name__ == "__main__":
     config.manifold.ode_solver.gamma = args.gamma
     if args.svd_tol is not None:
         config.manifold.ode_solver.svd_tol = args.svd_tol
-    if args.t0 is not None:
-        config.diffusion.scheduler.t0 = args.t0
-    if args.t1 is not None:
-        config.diffusion.scheduler.t1 = args.t1
+    if args.t_start is not None:
+        config.diffusion.scheduler.t_start = args.t_start
+    if args.t_end is not None:
+        config.diffusion.scheduler.t_end = args.t_end
     print("config=\n", config)
 
     datamodule = load_datamodule(config)
@@ -348,14 +348,13 @@ if __name__ == "__main__":
         pos_0 = data.pos[:, 0, :]
         # pos_T = data.pos[:, -1, :]  # MMFF structures
 
-        # Time sampling
-        t0 = config.diffusion.scheduler.t0
-        t1 = config.diffusion.scheduler.t1
-        time_step = torch.randint(
-            max(t0, 1), t1, size=(batch_size,)
-        , device=device)
-        print(f"Debug: time_step in [{min(time_step)}, {max(time_step)}]")
-        a = noise_schedule.get_alpha(time_step, device=device)
+        # Time sampling (continuous)
+        t_start = config.diffusion.scheduler.t_start
+        t_end = config.diffusion.scheduler.t_end
+        EPS = 1e-5  # avoid t=0
+        time_step = torch.rand(size=(batch_size,), device=device) * (t_end - EPS) + EPS
+        print(f"Debug: time_step in [{time_step.min():.4f}, {time_step.max():.4f}]")
+        a = noise_schedule.get_alpha(time_step) ** 2  # alpha_bar_sq
 
         if args.sampling_type == "cartesian":
             # Perterb pos in Euclidean
