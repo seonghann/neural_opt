@@ -17,3 +17,7 @@ wandb/
 
 # Published checkpoints (tracked via LFS or Zenodo, not in git)
 reproducible/checkpoints/
+
+# Research logs & analysis (local only)
+docs/
+analyze/
