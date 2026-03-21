@@ -22,6 +22,13 @@ def load_noise_scheduler(config):
         scheduler = DSMNoiseScheduler(config.scheduler.sigma_start, config.scheduler.sigma_end)
     elif name == "monomial":
         scheduler = MonomialNoiseScheduler(config.scheduler.sigma_min, config.scheduler.sigma_max, order=config.scheduler.order)
+    elif name == "continuous_tsdiff":
+        from src.diffusion.continuous_scheduler import SigmoidDiffusionScheduler
+        scheduler = SigmoidDiffusionScheduler(
+            beta_start=config.scheduler.beta_start,
+            beta_end=config.scheduler.beta_end,
+            EPS=getattr(config.scheduler, 'EPS', 1e-6),
+        )
     elif name == "none":
         scheduler = None
     else:

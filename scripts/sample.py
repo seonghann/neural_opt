@@ -24,7 +24,7 @@ from tqdm.auto import tqdm
 
 from src.dataset.data_module import load_datamodule
 from src.diffusion.model import DiffusionModel
-from src.diffusion.sampling import sample_batch_simple, sample_batch_diffusion
+from src.diffusion.sampling import sample_batch_simple, sample_batch_diffusion, sample_batch_langevin, sample_batch_gradient_descent
 from src.metrics.metrics import SamplingMetrics
 from src.utils.wandb_utils import setup_wandb
 
@@ -205,6 +205,21 @@ def main():
                 config,
                 stochastic=stochastic,
                 start_from_time=getattr(config.sampling, 'start_from_time', None),
+                dynamic_graph_list=dynamic_graph_list,
+            )
+        elif config.sampling.score_type == "langevin_exp":
+            batch_out = sample_batch_langevin(
+                model,
+                batch,
+                config,
+                stochastic=stochastic,
+                dynamic_graph_list=dynamic_graph_list,
+            )
+        elif config.sampling.score_type == "fixed_exp":
+            batch_out = sample_batch_gradient_descent(
+                model,
+                batch,
+                config,
                 dynamic_graph_list=dynamic_graph_list,
             )
         else:

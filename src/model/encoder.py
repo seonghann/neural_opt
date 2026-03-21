@@ -24,10 +24,14 @@ class GeoDiffEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.use_time_embedding = getattr(config, 'use_time_embedding', False)
+
+        # If time embedding is enabled, reserve 1 dim for normalized time
+        emb_dim = config.hidden_dim - 1 if self.use_time_embedding else config.hidden_dim
 
         self.edge_encoder = get_edge_encoder(config)
 
-        self.atom_embedding = nn.Embedding(config.num_atom_type, config.hidden_dim)
+        self.atom_embedding = nn.Embedding(config.num_atom_type, emb_dim)
         self.encoder = load_encoder(config, "graph_encoder")  # graph neural network
         self.score_mlp = MultiLayerPerceptron(
             2 * config.hidden_dim,
@@ -47,7 +51,7 @@ class GeoDiffEncoder(nn.Module):
 
         if self.config.append_atom_feat:
             self.atom_feat_embedding = nn.Linear(
-                config.num_atom_feat * 10, config.hidden_dim, bias=False
+                config.num_atom_feat * 10, emb_dim, bias=False
             )
             self.layers.append(self.atom_feat_embedding)
         return
@@ -76,6 +80,7 @@ class GeoDiffEncoder(nn.Module):
     def graph_encoding(
         self,
         graph: DynamicMolGraph,
+        normalized_time: torch.Tensor = None,
         **kwargs,
     ):
         batch = graph.batch  # batch: batch index (N, )
@@ -87,6 +92,11 @@ class GeoDiffEncoder(nn.Module):
             n_atoms = z.size(0)
             node_feat = F.one_hot(graph.node_feat, num_classes=10).reshape(n_atoms, -1)
             z = z + self.atom_feat_embedding(node_feat.float())
+
+        # 1b) append time embedding if enabled
+        if self.use_time_embedding and normalized_time is not None:
+            time_per_node = normalized_time[batch].unsqueeze(-1)  # (N, 1)
+            z = torch.cat([z, time_per_node], dim=-1)  # (N, hidden_dim)
 
         # 2) edge_embedding (using undirected-extended-edges)
         edge_index = graph.current_edge_index
@@ -104,12 +114,15 @@ class GeoDiffEncoder(nn.Module):
     def forward(
         self,
         graph: DynamicMolGraph,
+        normalized_time: torch.Tensor = None,
         **kwargs,
     ):
         """
-        Args: graph (DynamicMolGraph): DynamicMolGraph object
+        Args:
+            graph (DynamicMolGraph): DynamicMolGraph object
+            normalized_time (torch.Tensor, optional): Normalized time per graph in batch.
         """
-        node = self.graph_encoding(graph, **kwargs)
+        node = self.graph_encoding(graph, normalized_time=normalized_time, **kwargs)
 
         edge_index, edge_type = graph.full_edge(upper_triangle=True)
         edge, _ = self.edge_embedding(graph, edge_index, edge_type)

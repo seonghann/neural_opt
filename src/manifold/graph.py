@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, coalesce, unbatch
 from torch_geometric.nn import radius_graph
-from src.utils.chem import BOND_TYPES_ENCODER
+from src.utils.chem import BOND_TYPES_ENCODER, ATOM_ENCODER
 
 
 def binarize(x):
@@ -76,6 +76,39 @@ class MolGraph:
 
             self.extended = True
         return
+
+    def reset_to_dummy(self, dummy_dim=None):
+        """Reset the graph to a dummy state: remove all edges and replace
+        node features with dummy (unknown) values from ATOM_ENCODER.
+
+        Args:
+            dummy_dim: Expected feature dimension. If None, inferred from
+                current node_feat. Used as an assertion check.
+
+        Returns:
+            self, for method chaining.
+        """
+        # Remove all edges
+        self.edge_index = torch.zeros((2, 0), dtype=torch.long, device=self.device)
+        self.edge_feat = torch.zeros(0, dtype=torch.long, device=self.device)
+
+        # Replace node features with dummy vectors (use ATOM_ENCODER dummy values)
+        if dummy_dim is None:
+            dummy_dim = self.node_feat.size(1)
+
+        # Build dummy feature vector from ATOM_ENCODER
+        # Use len(encoder_dict) as the OOV/dummy index for each feature
+        dummy_feat = []
+        for key in ATOM_ENCODER:
+            dummy_value = len(ATOM_ENCODER[key])
+            dummy_feat.append(dummy_value)
+        dummy_feat = torch.tensor(dummy_feat, device=self.device).view(1, -1)
+        assert dummy_feat.size(1) == dummy_dim
+        self.node_feat = dummy_feat.repeat(self.num_nodes, 1)
+
+        # Reset extended flag since we removed all edges
+        self.extended = False
+        return self
 
     def to(self, device):
         # all torch.Tensor attributes are moved to the new device

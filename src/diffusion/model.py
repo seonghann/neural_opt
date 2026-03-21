@@ -5,6 +5,8 @@ Contains core model logic (forward pass, noise sampling, score transformation)
 without any PyTorch Lightning or training loop dependencies.
 """
 
+import random
+
 import torch
 import torch.nn as nn
 from torch_scatter import scatter_mean, scatter_sum
@@ -70,6 +72,7 @@ class DiffusionModel(nn.Module):
         )
 
         self.solver_threshold = config.manifold.ode_solver.vpae_thresh
+        self.use_graph_prob = getattr(config.train, 'graph_condition_prob', 1.0)
 
         if config.dataset.type == "molecule":
             self.graph_cls = MolGraph
@@ -79,6 +82,21 @@ class DiffusionModel(nn.Module):
             self.dynamic_graph_cls = DynamicRxnGraph
         else:
             raise ValueError(f"Dataset type not supported: {config.dataset.type}")
+
+    # -----------------------------------------------------------------
+    # Time embedding
+    # -----------------------------------------------------------------
+
+    def get_normalized_time(self, graph):
+        """Compute normalized time for time embedding (ablation feature, default OFF)."""
+        if not getattr(self.config.model, 'use_time_embedding', False):
+            return None
+        time_normalization = getattr(self.config.model, 'time_normalization', 't1')
+        if time_normalization == 't1':
+            max_timesteps = self.config.diffusion.scheduler.t1
+        else:
+            max_timesteps = self.config.diffusion.scheduler.num_diffusion_timesteps
+        return graph.t.float() / max_timesteps
 
     # -----------------------------------------------------------------
     # Forward pass
@@ -91,12 +109,14 @@ class DiffusionModel(nn.Module):
         edge2graph = node2graph.index_select(0, edge_index[0])
         num_nodes = node2graph.bincount()
 
+        normalized_time = self.get_normalized_time(graph)
+
         ## Prediction
         if self.pred_type == "node":
-            pred_x = self.NeuralNet(graph).squeeze()
+            pred_x = self.NeuralNet(graph, normalized_time=normalized_time).squeeze()
             pred_q = torch.zeros(*edge2graph.shape, dtype=pred_x.dtype, device=pred_x.device)
         elif self.pred_type == "edge":
-            pred_q = self.NeuralNet(graph).squeeze()
+            pred_q = self.NeuralNet(graph, normalized_time=normalized_time).squeeze()
             pred_x = torch.zeros((len(node2graph), 3), dtype=pred_q.dtype, device=pred_q.device)
 
             if self.q_type == "morse":
@@ -233,6 +253,8 @@ class DiffusionModel(nn.Module):
             graph, pos, pos_init, tt, target_x, target_q = self.apply_noise_diffusion_custom(data)
         else:
             raise NotImplementedError(f"Unsupported noise_type: {self.config.train.noise_type}")
+        if random.random() > self.use_graph_prob:
+            graph.reset_to_dummy()
         noisy_graph = self.dynamic_graph_cls.from_graph(graph, pos, pos_init, tt)
         return noisy_graph, target_x, target_q
 
