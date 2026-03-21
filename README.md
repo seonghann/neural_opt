@@ -1,9 +1,10 @@
-# Riemannian Denoising Score Matching for Molecular Structure Optimization
+# Riemannian Denoising Model for Molecular Structure Optimization
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/seonghann/neural_opt/blob/refactoring/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/seonghann/neural_opt/blob/master/LICENSE)
+[![Nature Computational Science](https://img.shields.io/badge/Nature%20Comp.%20Sci.-2026-blue.svg)](https://doi.org/10.1038/s43588-025-00919-1)
 [![arXiv](https://img.shields.io/badge/arXiv-2411.19769-b31b1b.svg)](https://arxiv.org/abs/2411.19769)
 
-Official implementation of **"Riemannian Denoising Score Matching for Molecular Structure Optimization with Chemical Accuracy"**.
+Official implementation of **"Riemannian denoising model for molecular structure optimization with chemical accuracy"**.
 
 ![Schematic](reproducible/assets/Schematic.png)
 
@@ -401,7 +402,8 @@ neural_opt/
   journal={Nature Computational Science},
   pages={1--11},
   year={2026},
-  publisher={Nature Publishing Group US New York}
+  publisher={Nature Publishing Group US New York},
+  doi={10.1038/s43588-025-00919-1}
 }
 ```
 
