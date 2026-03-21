@@ -5,7 +5,7 @@
 
 Official implementation of **"Riemannian Denoising Score Matching for Molecular Structure Optimization with Chemical Accuracy"**.
 
-![Schematic](assets/Schematic.png)
+![Schematic](reproducible/assets/Schematic.png)
 
 R-DSM optimizes molecular geometries from force-field (MMFF) to quantum-chemical (DFT) accuracy using a score-based diffusion model on the Riemannian manifold of internal coordinates.
 
